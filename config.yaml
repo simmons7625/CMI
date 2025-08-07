@@ -1,0 +1,83 @@
+# CMI Gesture Recognition Training Configuration
+# Based on train.ipynb notebook parameters
+
+# Data configuration
+data:
+  train_path: "/home/naohiro/CMI/dataset/train.csv"
+  demographics_path: "/home/naohiro/CMI/dataset/train_demographics.csv"
+  use_enhanced_features: true
+  val_split: 0.2
+
+# Model configuration
+model:
+  num_classes: 18
+  d_model: 128
+  num_heads: 8
+  max_seq_length: null  # Will be determined dynamically from data
+
+# Training configuration
+training:
+  batch_size: 16
+  num_epochs: 10
+  learning_rate: 0.0001  # 1e-4
+  weight_decay: 0.01     # 1e-2
+  random_seed: 42
+  num_workers: 2
+
+  # Scheduler configuration
+  scheduler:
+    patience: 5
+    decay_factor: 0.5
+
+# Output configuration
+output:
+  model_dir: "models"
+  log_dir: "logs"
+
+# Logging configuration (with wandb integration)
+logging:
+  use_wandb: true
+  wandb:
+    project: "cmi-gesture-recognition"
+    entity: null  # Set your wandb entity/username here
+    tags: ["gesture-recognition", "sensor-data", "efficientnet", "four-branch"]
+    notes: "Four-branch model with EfficientNetB0 TOF processing and enhanced features"
+
+# Feature processing configuration
+features:
+  # Sensor feature dimensions
+  tof_features: 320  # 5 sensors * 64 values each
+  acc_features: 3    # x, y, z
+  rot_features: 4    # quaternion w, x, y, z
+  thm_features: 5    # thermal sensors 1-5
+
+# Gesture classes
+gestures:
+  target:
+    - "Above ear - pull hair"
+    - "Cheek - pinch skin"
+    - "Eyebrow - pull hair"
+    - "Eyelash - pull hair"
+    - "Forehead - pull hairline"
+    - "Forehead - scratch"
+    - "Neck - pinch skin"
+    - "Neck - scratch"
+
+  non_target:
+    - "Text on phone"
+    - "Wave hello"
+    - "Write name in air"
+    - "Pull air toward your face"
+    - "Feel around in tray and pull out an object"
+    - "Glasses on/off"
+    - "Drink from bottle/cup"
+    - "Scratch knee/leg skin"
+    - "Write name on leg"
+    - "Pinch knee/leg skin"
+
+# Evaluation configuration
+evaluation:
+  save_predictions: true
+  save_confusion_matrix: true
+  save_classification_report: true
+  plot_training_curves: true

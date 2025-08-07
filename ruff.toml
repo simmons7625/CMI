@@ -1,0 +1,230 @@
+# Ruff configuration for CMI project
+# See: https://docs.astral.sh/ruff/configuration/
+
+# Same as Black.
+line-length = 88
+indent-width = 4
+
+# Assume Python 3.8+
+target-version = "py38"
+
+# Exclude patterns
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "venv",
+    "notebooks/**/*.ipynb",  # Exclude all notebook files
+]
+
+[lint]
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`) codes by default.
+# Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
+# McCabe complexity (`C901`) by default.
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # Pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I",   # isort
+    "N",   # pep8-naming
+    "D",   # pydocstyle
+    "S",   # flake8-bandit (security)
+    "BLE", # flake8-blind-except
+    "FBT", # flake8-boolean-trap
+    "A",   # flake8-builtins
+    "COM", # flake8-commas
+    "C4",  # flake8-comprehensions
+    "DTZ", # flake8-datetimez
+    "T20", # flake8-print
+    "DJ",  # flake8-django
+    "EM",  # flake8-errmsg
+    "EXE", # flake8-executable
+    "FA",  # flake8-future-annotations
+    "ISC", # flake8-implicit-str-concat
+    "ICN", # flake8-import-conventions
+    "G",   # flake8-logging-format
+    "INP", # flake8-no-pep420
+    "PIE", # flake8-pie
+    "T10", # flake8-debugger
+    "PYI", # flake8-pyi
+    "PT",  # flake8-pytest-style
+    "Q",   # flake8-quotes
+    "RSE", # flake8-raise
+    "RET", # flake8-return
+    "SLF", # flake8-self
+    "SLOT", # flake8-slots
+    "TID", # flake8-tidy-imports
+    "TCH", # flake8-type-checking
+    "INT", # flake8-gettext
+    "ARG", # flake8-unused-arguments
+    "PTH", # flake8-use-pathlib
+    "ERA", # eradicate
+    "PD",  # pandas-vet
+    "PGH", # pygrep-hooks
+    "PL",  # Pylint
+    "TRY", # tryceratops
+    "FLY", # flynt
+    "NPY", # NumPy-specific rules
+    "PERF", # Perflint
+    "RUF", # Ruff-specific rules
+]
+
+ignore = [
+    # Allow non-abstract empty methods in abstract base classes
+    "B027",
+    # Allow boolean positional values in function calls, like `dict.get(... True)`
+    "FBT003",
+    # Allow boolean arguments (common in ML configs)
+    "FBT001", "FBT002",
+    # Ignore checks for possible passwords
+    "S105", "S106", "S107",
+    # Ignore complexity
+    "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915",
+    # Allow print statements (useful for ML debugging)
+    "T201",
+    # Allow relative imports
+    "TID252",
+    # Allow magic value comparisons (common in ML)
+    "PLR2004",
+    # Allow too many arguments (common in ML model constructors)
+    "PLR0913",
+    # Allow long docstrings
+    "D213", "D203",
+    # Allow missing docstrings in magic methods
+    "D105",
+    # Allow missing docstrings in __init__
+    "D107",
+    # Allow missing docstrings in modules and classes (ML code focus on functionality)
+    "D100", "D101", "D102",
+    # Ignore pandas rules (using polars instead)
+    "PD",
+    # Allow catching broad exceptions (needed for fallback processing)
+    "BLE001",
+    # Allow assert statements (used in ML for debugging)
+    "S101",
+    # Allow subprocess calls (needed for system commands)
+    "S603", "S607",
+    # Allow hardcoded temporary file paths
+    "S108",
+    # Ignore try/except/else without raise
+    "TRY300",
+    # Allow raising in except clauses
+    "TRY201",
+    # Allow f-string in exception
+    "EM102",
+    # Allow bare except (for fallback processing)
+    "E722",
+    # Allow single character variables (common in ML: F, R, etc.)
+    "N812", "N817",
+    # Allow performance warnings (PERF)
+    "PERF203", "PERF401",
+    # Allow unused arguments in method signatures
+    "ARG002",
+    # Allow pathlib suggestions (will migrate later)
+    "PTH103", "PTH118", "PTH120", "PTH123",
+    # Allow datetime without timezone
+    "DTZ005",
+    # Allow old random seed (will update later)
+    "NPY002",
+    # Allow executable check
+    "EXE001",
+    # Allow line length for specific ML contexts
+    "E501",
+]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+[lint.isort]
+# Use a single line after each import block.
+split-on-trailing-comma = true
+known-first-party = ["src"]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.pylint]
+max-args = 10
+max-branches = 15
+max-returns = 8
+max-statements = 60
+
+[lint.per-file-ignores]
+# Tests can use magic values, assertions, and print statements
+"tests/**/*.py" = [
+    "PLR2004",  # Magic value used in comparison
+    "S101",     # Use of assert
+    "T201",     # print statements
+    "ARG",      # Unused function args
+    "FBT",      # Don't care about booleans as positional arguments in tests
+    "PLR0913",  # Too many arguments to function call
+    "S311",     # Standard pseudo-random generators are not suitable for security/cryptographic purposes
+]
+
+# Notebooks can be more relaxed
+"notebooks/**/*.py" = [
+    "T201",     # print statements
+    "D100",     # Missing docstring in public module
+    "D103",     # Missing docstring in public function
+    "INP001",   # File is part of an implicit namespace package
+    "PLR2004",  # Magic value used in comparison
+    "S101",     # Use of assert
+]
+
+# Scripts can have relaxed rules
+"scripts/**/*.py" = [
+    "T201",     # print statements
+    "D100",     # Missing docstring in public module
+    "D103",     # Missing docstring in public function
+    "INP001",   # File is part of an implicit namespace package
+]
+
+# Allow print and missing docstrings in training script
+"train.py" = [
+    "T201",     # print statements
+    "D103",     # Missing docstring in public function
+]
+
+# Data processing files can have relaxed complexity rules
+"src/data_loader.py" = [
+    "PLR0912",  # Too many branches
+    "PLR0915",  # Too many statements
+    "C901",     # Too complex
+]

@@ -1,0 +1,98 @@
+# Pre-commit configuration for CMI project
+# See https://pre-commit.com for more information
+
+repos:
+  # Ruff linter and formatter
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.6.9
+    hooks:
+      # Run the linter.
+      - id: ruff
+        args: [--fix]
+        types_or: [python, pyi]
+        exclude: '\.ipynb$'
+      # Run the formatter.
+      - id: ruff-format
+        types_or: [python, pyi]
+        exclude: '\.ipynb$'
+
+  # Additional hooks for code quality
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      # Basic file checks
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: end-of-file-fixer
+        exclude: '\.md$'
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-case-conflict
+
+      # Python specific
+      - id: check-ast
+      - id: check-builtin-literals
+      - id: check-docstring-first
+      - id: debug-statements
+      - id: name-tests-test
+        args: [--django]
+
+      # Security
+      - id: detect-private-key
+
+      # File size and line length
+      - id: check-added-large-files
+        args: [--maxkb=10000]  # 10MB max
+
+  # Security scanning with bandit
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: [-c, pyproject.toml]
+        additional_dependencies: ["bandit[toml]"]
+        exclude: ^tests/
+
+  # Notebook cleaning (remove outputs, metadata)
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.7.1
+    hooks:
+      - id: nbstripout
+        files: '\.ipynb$'
+
+# Global excludes
+exclude: |
+  (?x)^(
+      .*\.min\.(js|css)$|
+      .*-min\.(js|css)$|
+      .*\.bundle\.(js|css)$|
+      node_modules/.*|
+      \.venv/.*|
+      venv/.*|
+      env/.*|
+      \.env/.*|
+      __pycache__/.*|
+      \.pytest_cache/.*|
+      \.mypy_cache/.*|
+      \.ruff_cache/.*|
+      build/.*|
+      dist/.*|
+      \.git/.*|
+      data/.*|
+      dataset/.*|
+      models/.*|
+      experiments/.*|
+      \.DS_Store|
+      Thumbs\.db
+  )$
+
+# Configuration
+default_language_version:
+  python: python3.11
+
+# Hooks to run in parallel for speed
+default_stages: [pre-commit]
+minimum_pre_commit_version: '3.0.0'

@@ -1,7 +1,7 @@
 # Model Architecture Documentation
 
 ## Overview
-The gesture recognition model uses a dual-branch architecture that processes Time-of-Flight (ToF) sensor data and other sensor data separately, then fuses them for classification into 18 gesture classes.
+The gesture recognition model uses a four-branch architecture that processes Time-of-Flight (ToF), accelerometer, rotation (gyroscope), and thermal sensor data separately, then fuses them for classification into 18 gesture classes.
 
 ## Architecture Diagram
 
@@ -9,7 +9,9 @@ The gesture recognition model uses a dual-branch architecture that processes Tim
 graph TD
     %% Input Data
     A[ToF Sensor Data<br/>batch_size × seq_len × 320<br/>5 sensors × 64 values] --> B[Reshape to 8×8 Grid<br/>per sensor per timestep]
-    C[Other Sensor Data<br/>batch_size × seq_len × 19<br/>ACC + ROT + THM + Demographics] --> D[Linear Projection<br/>19 → d_model]
+    C1[Accelerometer Data<br/>batch_size × seq_len × 3] --> D1[Linear Projection<br/>3 → d_model]
+    C2[Rotation Data<br/>batch_size × seq_len × 4] --> D2[Linear Projection<br/>4 → d_model]
+    C3[Thermal Data<br/>batch_size × seq_len × 5] --> D3[Linear Projection<br/>5 → d_model]
     
     %% ToF Branch - EfficientNet Processing
     B --> E[Conv2D Stem<br/>1→32, 3×3, BN, ReLU]
@@ -26,29 +28,43 @@ graph TD
     O --> P[Average Sensor Features<br/>per timestep]
     P --> Q[ToF Features<br/>batch_size × d_model × seq_len]
     
-    %% Other Sensors Branch
-    D --> R[MultiHead Attention<br/>Temporal modeling]
-    R --> S[LayerNorm + Dropout]
-    S --> T[Other Features<br/>batch_size × d_model × seq_len]
+    %% Other Sensors Branches
+    D1 --> R1[MultiHead Attention<br/>Temporal modeling]
+    R1 --> S1[LayerNorm + Dropout]
+    S1 --> T1[ACC Features<br/>batch_size × d_model × seq_len]
     
-    %% 2D Attention (Optional)
-    Q --> U{2D Attention<br/>Feature Selection}
-    T --> V{2D Attention<br/>Feature Selection}
+    D2 --> R2[MultiHead Attention<br/>Temporal modeling]
+    R2 --> S2[LayerNorm + Dropout]
+    S2 --> T2[ROT Features<br/>batch_size × d_model × seq_len]
+    
+    D3 --> R3[MultiHead Attention<br/>Temporal modeling]
+    R3 --> S3[LayerNorm + Dropout]
+    S3 --> T3[THM Features<br/>batch_size × d_model × seq_len]
+    
+    %% MultiHead Attention
+    Q --> U[MultiHead Attention<br/>TOF Branch]
+    T1 --> V1[MultiHead Attention<br/>ACC Branch]
+    T2 --> V2[MultiHead Attention<br/>ROT Branch]
+    T3 --> V3[MultiHead Attention<br/>THM Branch]
     U --> W[Attended ToF<br/>batch_size × d_model × seq_len]
-    V --> X[Attended Other<br/>batch_size × d_model × seq_len]
+    V1 --> X1[Attended ACC<br/>batch_size × d_model × seq_len]
+    V2 --> X2[Attended ROT<br/>batch_size × d_model × seq_len]
+    V3 --> X3[Attended THM<br/>batch_size × d_model × seq_len]
     
     %% Feature Fusion
     W --> Y[Concatenate Features<br/>dim=1]
-    X --> Y
-    Y --> Z[Fused Features<br/>batch_size × 2×d_model × seq_len]
+    X1 --> Y
+    X2 --> Y
+    X3 --> Y
+    Y --> Z[Fused Features<br/>batch_size × 4×d_model × seq_len]
     Z --> AA[BatchNorm1d]
     AA --> BB[Global Average Pool<br/>AdaptiveAvgPool1d]
-    BB --> CC[Pooled Features<br/>batch_size × 2×d_model]
+    BB --> CC[Pooled Features<br/>batch_size × 4×d_model]
     
     %% Classification Head
-    CC --> DD[Linear 256→128<br/>ReLU + Dropout 0.3]
-    DD --> EE[Linear 128→64<br/>ReLU + Dropout 0.2]
-    EE --> FF[Linear 64→18<br/>Final Classification]
+    CC --> DD[Linear 512→256<br/>ReLU + Dropout 0.3]
+    DD --> EE[Linear 256→128<br/>ReLU + Dropout 0.2]
+    EE --> FF[Linear 128→18<br/>Final Classification]
     FF --> GG[Gesture Logits<br/>batch_size × 18]
     
     %% MBConv2D Detail Subgraph
@@ -119,16 +135,22 @@ Feature Projection: Linear(192 → d_model)
 
 **Output**: `(batch_size, d_model, seq_len)`
 
-### 2. Other Sensors Branch - Traditional Processing
+### 2. Other Sensors Branches - Traditional Processing
 
-**Input**: `(batch_size, seq_len, 19)` - Accelerometer(3) + Rotation(4) + Thermal(5) + Demographics(7)
+**Accelerometer Branch:**
+- **Input**: `(batch_size, seq_len, 3)` - acc_x, acc_y, acc_z
+- **Components**: Linear(3 → d_model) + MultiHeadAttention + LayerNorm + Dropout
+- **Output**: `(batch_size, d_model, seq_len)`
 
-**Components:**
-- **Linear Projection**: Linear(19 → d_model)
-- **Temporal Attention**: MultiHeadAttention for sequence modeling
-- **Normalization**: LayerNorm + Dropout
+**Rotation Branch:**
+- **Input**: `(batch_size, seq_len, 4)` - rot_w, rot_x, rot_y, rot_z (quaternion)
+- **Components**: Linear(4 → d_model) + MultiHeadAttention + LayerNorm + Dropout
+- **Output**: `(batch_size, d_model, seq_len)`
 
-**Output**: `(batch_size, d_model, seq_len)`
+**Thermal Branch:**
+- **Input**: `(batch_size, seq_len, 5)` - thm_1 through thm_5
+- **Components**: Linear(5 → d_model) + MultiHeadAttention + LayerNorm + Dropout
+- **Output**: `(batch_size, d_model, seq_len)`
 
 ### 3. MBConv2D Block Details
 
@@ -139,41 +161,44 @@ Each MBConv2D block implements the Mobile Inverted Bottleneck with:
 - **Point-wise Projection**: 1×1 Conv2d for dimension reduction
 - **Residual Connection**: Skip connection when input/output dimensions match
 
-### 4. 2D Attention Mechanism
+### 4. MultiHead Attention Mechanism
 
-**MultiHeadAttention2D** operates on `(feature_dim, seq_len)` dimensions:
-- **Purpose**: Select discriminative features based on classification capability
-- **Input**: `(batch_size, feature_dim, seq_len)`
-- **Process**: Transpose → Apply attention → Transpose back
-- **Output**: `(batch_size, feature_dim, seq_len)`
+**Per-Branch MultiHeadAttention** operates on each branch separately:
+- **Purpose**: Temporal modeling and feature refinement for each sensor modality
+- **Input**: `(batch_size, seq_len, d_model)` (after transpose)
+- **Process**: Apply temporal attention → Transpose back
+- **Output**: `(batch_size, d_model, seq_len)`
 
 ### 5. Feature Fusion & Classification
 
 **Fusion Strategy:**
 ```python
-# Both branches output (batch_size, d_model, seq_len)
+# All branches output (batch_size, d_model, seq_len)
 tof_features = tof_branch(tof_input)      # (batch_size, 128, seq_len)
-other_features = other_branch(other_input) # (batch_size, 128, seq_len)
+acc_features = acc_branch(acc_input)      # (batch_size, 128, seq_len)
+rot_features = rot_branch(rot_input)      # (batch_size, 128, seq_len)
+thm_features = thm_branch(thm_input)      # (batch_size, 128, seq_len)
 
-# Apply 2D attention (optional)
-if seq_len is fixed:
-    tof_features = tof_attention(tof_features)
-    other_features = other_attention(other_features)
+# Apply MultiHead attention to each branch
+tof_features = tof_attention(tof_features)
+acc_features = acc_attention(acc_features)
+rot_features = rot_attention(rot_features)
+thm_features = thm_attention(thm_features)
 
 # Concatenate along feature dimension
-fused = torch.cat([tof_features, other_features], dim=1)  # (batch_size, 256, seq_len)
+fused = torch.cat([tof_features, acc_features, rot_features, thm_features], dim=1)  # (batch_size, 512, seq_len)
 ```
 
 **Classification Head:**
 ```python
 # Global pooling over sequence dimension
-pooled = AdaptiveAvgPool1d(1)(fused).squeeze(-1)  # (batch_size, 256)
+pooled = AdaptiveAvgPool1d(1)(fused).squeeze(-1)  # (batch_size, 512)
 
 # Multi-layer classifier with dropout
 classifier = Sequential(
-    Linear(256 → 128) + ReLU + Dropout(0.3),
-    Linear(128 → 64) + ReLU + Dropout(0.2),
-    Linear(64 → 18)  # 18 gesture classes
+    Linear(512 → 256) + ReLU + Dropout(0.3),
+    Linear(256 → 128) + ReLU + Dropout(0.2), 
+    Linear(128 → 18)  # 18 gesture classes
 )
 ```
 
@@ -186,12 +211,14 @@ classifier = Sequential(
    - Output: Sequential ToF embeddings
 
 2. **Other Sensors Processing**:
-   - 19 features → Linear projection → Temporal attention
-   - Output: Sequential sensor embeddings
+   - Accelerometer: 3 features → Linear projection → Temporal attention
+   - Rotation: 4 features → Linear projection → Temporal attention  
+   - Thermal: 5 features → Linear projection → Temporal attention
+   - Output: Sequential sensor embeddings for each modality
 
 3. **Feature Fusion**:
-   - Concatenate ToF + Other embeddings
-   - Apply 2D attention for feature selection
+   - Concatenate ToF + ACC + ROT + THM embeddings (4 branches)
+   - Apply MultiHead attention to each branch separately
    - Global temporal pooling
 
 4. **Classification**:
@@ -243,8 +270,10 @@ model = create_model(
 )
 
 # Forward pass
-tof_data = torch.randn(batch_size, seq_len, 320)    # ToF sensor data
-other_data = torch.randn(batch_size, seq_len, 19)   # Other sensor + demographics
+tof_data = torch.randn(batch_size, seq_len, 320)  # ToF sensor data
+acc_data = torch.randn(batch_size, seq_len, 3)    # Accelerometer data
+rot_data = torch.randn(batch_size, seq_len, 4)    # Rotation/gyroscope data
+thm_data = torch.randn(batch_size, seq_len, 5)    # Thermal sensor data
 
-logits = model(tof_data, other_data)  # (batch_size, 18)
+logits = model(tof_data, acc_data, rot_data, thm_data)  # (batch_size, 18)
 ```
