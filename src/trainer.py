@@ -49,7 +49,6 @@ class CMITrainer:
             mode="max",
             factor=training_config.get("lr_factor", 0.5),
             patience=training_config.get("lr_patience", 5),
-            verbose=training_config.get("verbose", True),
         )
 
         # Training state

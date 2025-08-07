@@ -13,16 +13,19 @@ model:
   num_classes: 18
   d_model: 128
   num_heads: 8
-  max_seq_length: null  # Will be determined dynamically from data
+  max_seq_length: 10  # Will be determined dynamically from data
 
 # Training configuration
 training:
-  batch_size: 16
+  batch_size: 32
   num_epochs: 10
-  learning_rate: 0.0001  # 1e-4
-  weight_decay: 0.01     # 1e-2
+  learning_rate: 0.0001
+  weight_decay: 0.001
   random_seed: 42
   num_workers: 2
+
+  # Gradient clipping to prevent exploding gradients
+  gradient_clip_norm: 1.0
 
   # Scheduler configuration
   scheduler:

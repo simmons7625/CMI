@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""CMI Gesture Recognition Training Script.
-
-This script trains the four-branch gesture recognition model for the CMI competition.
-"""
+"""CMI Gesture Recognition Training Script with Config File Support."""
 
 import argparse
-import os
+import json
 import sys
+import time
+import traceback
+from pathlib import Path
 
 import polars as pl
+import torch
+import yaml
 from torch.utils.data import DataLoader
 
-# Import modularized components
 from src.dataset import (
     CMIDataset,
     SequenceProcessor,
@@ -20,449 +21,286 @@ from src.dataset import (
 )
 from src.evaluator import CMIEvaluator
 from src.trainer import CMITrainer, create_model_config, create_trainer_config
-from src.utils import (
-    calculate_optimal_max_length,
-    check_gpu_usage,
-    create_experiment_dir,
-    format_time,
-    get_sequence_statistics,
-    log_experiment_results,
-    print_data_info,
-    print_model_info,
-    save_config,
-    set_seed,
-)
+from src.utils import create_experiment_dir, set_seed
 
 
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Train CMI Gesture Recognition Model")
-
-    # Data arguments
     parser.add_argument(
-        "--data-dir",
+        "--config",
         type=str,
-        default="dataset",
-        help="Directory containing training data",
+        default="config.yaml",
+        help="Path to YAML configuration file",
     )
-    parser.add_argument(
-        "--enhanced-features",
-        action="store_true",
-        default=True,
-        help="Use enhanced feature processing",
-    )
-    parser.add_argument(
-        "--max-seq-length",
-        type=int,
-        default=None,
-        help="Maximum sequence length (auto-calculate if None)",
-    )
-    parser.add_argument(
-        "--percentile-cutoff",
-        type=float,
-        default=95.0,
-        help="Percentile for auto max sequence length calculation",
-    )
-
-    # Model arguments
-    parser.add_argument(
-        "--d-model",
-        type=int,
-        default=128,
-        help="Model embedding dimension",
-    )
-    parser.add_argument(
-        "--num-heads",
-        type=int,
-        default=8,
-        help="Number of attention heads",
-    )
-    parser.add_argument(
-        "--num-classes",
-        type=int,
-        default=18,
-        help="Number of gesture classes",
-    )
-
-    # Training arguments
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=50,
-        help="Number of training epochs",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=16,
-        help="Training batch size",
-    )
-    parser.add_argument(
-        "--learning-rate",
-        type=float,
-        default=1e-3,
-        help="Initial learning rate",
-    )
-    parser.add_argument(
-        "--weight-decay",
-        type=float,
-        default=1e-4,
-        help="Weight decay for optimizer",
-    )
-    parser.add_argument(
-        "--gradient-clip",
-        type=float,
-        default=1.0,
-        help="Gradient clipping norm (0 to disable)",
-    )
-
-    # Other arguments
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed for reproducibility",
-    )
-    parser.add_argument(
-        "--num-workers",
-        type=int,
-        default=2,
-        help="Number of data loading workers",
-    )
-    parser.add_argument(
-        "--device",
-        type=str,
-        default="auto",
-        choices=["auto", "cuda", "cpu"],
-        help="Device to use for training",
-    )
-    parser.add_argument(
-        "--experiment-name",
-        type=str,
-        default="cmi_training",
-        help="Name for the experiment",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="experiments",
-        help="Output directory for experiments",
-    )
-
     return parser.parse_args()
 
 
-def load_data(args):
-    """Load and prepare training data."""
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file."""
+    config_path = Path(config_path)
+    if not config_path.exists():
+        msg = f"Config file not found: {config_path}"
+        raise FileNotFoundError(msg)
+
+    print(f"✅ Loading configuration from: {config_path}")
+    with open(config_path) as f:
+        return yaml.safe_load(f)
+
+
+def load_and_process_data(config: dict):
+    """Load and process training data."""
     print("Loading training data...")
 
-    # Load raw data
-    train_df = pl.read_csv(f"{args.data_dir}/train.csv")
-    demographics_df = pl.read_csv(f"{args.data_dir}/train_demographics.csv")
+    # Load data
+    train_df = pl.read_csv(config["data"]["train_path"])
 
-    # Print data info
-    print_data_info(train_df, demographics_df)
-
-    # Prepare gesture labels
+    # Prepare labels
     train_df, label_encoder, target_gestures, non_target_gestures = (
         prepare_gesture_labels(train_df)
     )
 
     print("\nGesture ID mapping:")
     for i, gesture in enumerate(label_encoder.classes_):
-        print(f"{i}: {gesture}")
+        print(f"  {i}: {gesture}")
 
-    return (
-        train_df,
-        demographics_df,
-        label_encoder,
-        target_gestures,
-        non_target_gestures,
-    )
+    # Process sequences
+    processor = SequenceProcessor()
+    sequences = processor.process_dataframe(train_df)
 
+    # Calculate max sequence length
+    max_seq_length = config["model"].get("max_seq_length", 100)
 
-def process_sequences(args, train_df, label_encoder):
-    """Process sequences with enhanced features."""
-    print("\nProcessing sequences...")
-
-    # Initialize sequence processor
-    processor = SequenceProcessor(use_enhanced_features=args.enhanced_features)
-
-    # Process dataframe into sequences
-    sequences, sequence_lengths = processor.process_dataframe(train_df, label_encoder)
-
-    # Print sequence statistics
-    stats = get_sequence_statistics(sequences)
-    print("\nSequence Statistics:")
-    for key, value in stats.items():
-        print(f"  {key}: {value}")
-
-    # Calculate optimal max sequence length
-    if args.max_seq_length is None:
-        max_seq_length = calculate_optimal_max_length(
-            sequence_lengths,
-            percentile=args.percentile_cutoff,
-        )
-    else:
-        max_seq_length = args.max_seq_length
-        print(f"\nUsing specified max sequence length: {max_seq_length}")
+    # Get feature dimensions
+    feature_dims = get_enhanced_feature_dims(sequences)
 
     # Create train/val split
-    train_sequences, val_sequences = processor.create_train_val_split(sequences)
+    train_sequences, val_sequences = processor.create_train_val_split(
+        sequences,
+        test_size=config["data"]["val_split"],
+        random_state=config["training"]["random_seed"],
+    )
 
-    print("\nDataset split:")
-    print(f"  Training sequences: {len(train_sequences)}")
-    print(f"  Validation sequences: {len(val_sequences)}")
+    print(f"Training sequences: {len(train_sequences)}")
+    print(f"Validation sequences: {len(val_sequences)}")
 
-    # Get feature dimensions if using enhanced features
-    feature_dims = get_enhanced_feature_dims(sequences)
-    print("\nFeature dimensions:")
-    for key, dim in feature_dims.items():
-        print(f"  {key}: {dim}")
+    return {
+        "train_sequences": train_sequences,
+        "val_sequences": val_sequences,
+        "label_encoder": label_encoder,
+        "max_seq_length": max_seq_length,
+        "feature_dims": feature_dims,
+        "target_gestures": target_gestures,
+        "non_target_gestures": non_target_gestures,
+    }
 
-    return train_sequences, val_sequences, max_seq_length, feature_dims
 
-
-def create_dataloaders(args, train_sequences, val_sequences, max_seq_length):
-    """Create training and validation dataloaders."""
-    print("\nCreating dataloaders...")
+def create_data_loaders(data_info: dict, config: dict):
+    """Create training and validation data loaders."""
+    print("Creating data loaders...")
 
     # Create datasets
     train_dataset = CMIDataset(
-        train_sequences,
-        max_length=max_seq_length,
-        use_enhanced_features=args.enhanced_features,
-    )
-    val_dataset = CMIDataset(
-        val_sequences,
-        max_length=max_seq_length,
-        use_enhanced_features=args.enhanced_features,
+        data_info["train_sequences"],
+        max_length=data_info["max_seq_length"],
     )
 
-    # Create dataloaders
+    val_dataset = CMIDataset(
+        data_info["val_sequences"],
+        max_length=data_info["max_seq_length"],
+    )
+
+    # Create data loaders
     train_loader = DataLoader(
         train_dataset,
-        batch_size=args.batch_size,
+        batch_size=config["training"]["batch_size"],
         shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=args.device != "cpu",
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=args.device != "cpu",
+        num_workers=config["training"]["num_workers"],
     )
 
-    print(f"  Train batches: {len(train_loader)}")
-    print(f"  Validation batches: {len(val_loader)}")
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config["training"]["batch_size"],
+        shuffle=False,
+        num_workers=config["training"]["num_workers"],
+    )
+
+    print(f"Train batches: {len(train_loader)}")
+    print(f"Validation batches: {len(val_loader)}")
 
     return train_loader, val_loader
 
 
-def setup_training(args, feature_dims, exp_dir):
-    """Setup model and trainer."""
-    print("\nSetting up training...")
-
-    # Create model configuration
-    model_config = create_model_config(
-        num_classes=args.num_classes,
-        d_model=args.d_model,
-        num_heads=args.num_heads,
-        acc_dim=feature_dims["acc"],
-        rot_dim=feature_dims["rot"],
-        thm_dim=feature_dims["thm"],
-    )
-
-    # Create training configuration
-    training_config = create_trainer_config(
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        gradient_clip_norm=args.gradient_clip if args.gradient_clip > 0 else None,
-    )
-
-    # Save configurations
-    save_config(model_config, os.path.join(exp_dir, "model_config.json"))
-    save_config(training_config, os.path.join(exp_dir, "training_config.json"))
-    save_config(vars(args), os.path.join(exp_dir, "args.json"))
-
-    # Create trainer
-    trainer = CMITrainer(model_config, training_config, device=args.device)
-
-    # Print model info
-    print_model_info(trainer.model)
-
-    return trainer, model_config
-
-
 def main():
     """Main training function."""
-    import time
-
-    start_time = time.time()
-
     # Parse arguments
     args = parse_arguments()
 
-    # Set seed for reproducibility
-    set_seed(args.seed)
+    # Load configuration
+    try:
+        config = load_config(args.config)
+    except FileNotFoundError as e:
+        print(f"❌ {e}")
+        return 1
 
-    # Check GPU
-    check_gpu_usage()
+    # Set seed for reproducibility
+    set_seed(config["training"]["random_seed"])
+
+    # Check GPU availability
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
     # Create experiment directory
-    exp_dir = create_experiment_dir(args.output_dir, args.experiment_name)
+    exp_name = config.get("experiment_name", "cmi_training")
+    exp_dir = create_experiment_dir(base_dir="experiments", experiment_name=exp_name)
+    print(f"Experiment directory: {exp_dir}")
 
     try:
-        # Load data
-        (
-            train_df,
-            demographics_df,
-            label_encoder,
-            target_gestures,
-            non_target_gestures,
-        ) = load_data(args)
+        start_time = time.time()
 
-        # Process sequences
-        train_sequences, val_sequences, max_seq_length, feature_dims = (
-            process_sequences(
-                args,
-                train_df,
-                label_encoder,
-            )
+        # Load and process data
+        data_info = load_and_process_data(config)
+
+        # Create data loaders
+        train_loader, val_loader = create_data_loaders(data_info, config)
+
+        # Create model configuration
+        model_config = create_model_config(
+            num_classes=config["model"]["num_classes"],
+            d_model=config["model"]["d_model"],
+            num_heads=config["model"]["num_heads"],
+            seq_len=data_info["max_seq_length"],
+            acc_dim=data_info["feature_dims"]["acc"],
+            rot_dim=data_info["feature_dims"]["rot"],
+            thm_dim=data_info["feature_dims"]["thm"],
         )
 
-        # Create dataloaders
-        train_loader, val_loader = create_dataloaders(
-            args,
-            train_sequences,
-            val_sequences,
-            max_seq_length,
+        # Create trainer configuration
+        trainer_config = create_trainer_config(
+            learning_rate=config["training"]["learning_rate"],
+            weight_decay=config["training"]["weight_decay"],
+            lr_factor=config["training"]["scheduler"]["decay_factor"],
+            lr_patience=config["training"]["scheduler"]["patience"],
+            gradient_clip_norm=config["training"]["gradient_clip_norm"],
         )
 
-        # Setup training
-        trainer, model_config = setup_training(args, feature_dims, exp_dir)
+        # Create trainer
+        trainer = CMITrainer(model_config, trainer_config, device="auto")
+
+        # Print model info
+        param_info = trainer.count_parameters()
+        print(f"Model parameters: {param_info['trainable_parameters']:,}")
+
+        # Save configurations
+        config_dir = Path(exp_dir) / "configs"
+        config_dir.mkdir(exist_ok=True)
+
+        with open(config_dir / "config.yaml", "w") as f:
+            yaml.dump(config, f, default_flow_style=False, indent=2)
+
+        with open(config_dir / "model_config.json", "w") as f:
+            json.dump(model_config, f, indent=2)
+
+        with open(config_dir / "trainer_config.json", "w") as f:
+            json.dump(trainer_config, f, indent=2)
 
         # Train model
-        print(f"\n{'='*60}")
-        print("Starting training...")
+        print(f"{'='*60}")
+        print("🚀 Starting training...")
         print(f"{'='*60}")
 
-        model_save_path = os.path.join(exp_dir, "models", "best_model.pt")
+        model_save_path = Path(exp_dir) / "models" / "best_model.pt"
+        model_save_path.parent.mkdir(exist_ok=True)
+
         training_history = trainer.train(
             train_loader=train_loader,
             val_loader=val_loader,
-            num_epochs=args.epochs,
-            model_save_path=model_save_path,
+            num_epochs=config["training"]["num_epochs"],
+            model_save_path=str(model_save_path),
         )
 
+        # Load best model for evaluation
+        trainer.load_checkpoint(str(model_save_path), load_optimizer=False)
+        evaluator = CMIEvaluator(trainer.model, device=device)
+
         # Evaluate model
-        print(f"\n{'='*60}")
-        print("Evaluating model...")
+        print(f"{'='*60}")
+        print("📊 Evaluating model...")
         print(f"{'='*60}")
 
-        # Load best model
-        trainer.load_checkpoint(model_save_path, load_optimizer=False)
-        evaluator = CMIEvaluator(trainer.model, device=args.device)
-
-        # Run evaluation
-        results = evaluator.evaluate(val_loader, label_encoder)
+        results = evaluator.evaluate(val_loader, data_info["label_encoder"])
 
         # Print results
-        print("\nFinal Results:")
-        print(f"  Validation Accuracy: {results['accuracy']:.4f}")
+        print("\n🎯 Final Results:")
+        print(f"  Accuracy: {results['accuracy']:.4f} ({results['accuracy']*100:.2f}%)")
         print(f"  Macro F1: {results['macro_f1']:.4f}")
         print(f"  Weighted F1: {results['weighted_f1']:.4f}")
 
-        # Analyze per-class performance
-        per_class_df = evaluator.analyze_per_class_performance(
-            results,
-            target_gestures,
-            non_target_gestures,
-        )
-        print("\nPer-class Performance (top 5):")
-        print(per_class_df.head())
+        # Print classification report
+        evaluator.print_classification_report(val_loader, data_info["label_encoder"])
 
-        # Plot training curves
+        # Save visualizations
+        plots_dir = Path(exp_dir) / "plots"
+        plots_dir.mkdir(exist_ok=True)
+
+        # Training curves
         evaluator.plot_training_curves(
             training_history,
-            save_path=os.path.join(exp_dir, "plots", "training_curves.png"),
+            save_path=plots_dir / "training_curves.png",
         )
+        print(f"📈 Training curves saved to: {plots_dir / 'training_curves.png'}")
 
-        # Plot confusion matrix
+        # Confusion matrix
         evaluator.plot_confusion_matrix(
             val_loader,
-            label_encoder,
-            save_path=os.path.join(exp_dir, "plots", "confusion_matrix.png"),
+            data_info["label_encoder"],
+            save_path=plots_dir / "confusion_matrix.png",
         )
-
-        # Print classification report
-        evaluator.print_classification_report(val_loader, label_encoder)
-
-        # Save final results
-        final_results = {
-            "training_history": training_history,
-            "evaluation_results": {
-                "accuracy": results["accuracy"],
-                "macro_f1": results["macro_f1"],
-                "weighted_f1": results["weighted_f1"],
-                "per_class_f1": [r["f1_score"] for r in results["per_class_results"]],
-            },
-            "model_config": model_config,
-            "feature_dims": feature_dims,
-            "max_seq_length": max_seq_length,
-            "total_parameters": trainer.count_parameters()["total_parameters"],
-        }
+        print(f"🔥 Confusion matrix saved to: {plots_dir / 'confusion_matrix.png'}")
 
         # Save results
-        evaluator.save_results(
-            results,
-            os.path.join(exp_dir, "evaluation_results.json"),
-        )
-        log_experiment_results(
-            final_results,
-            os.path.join(exp_dir, "experiment_log.txt"),
-        )
+        results_file = Path(exp_dir) / "results.json"
+        evaluator.save_results(results, str(results_file))
 
         # Save final model with metadata
-        final_model_path = os.path.join(exp_dir, "models", "final_model.pt")
+        final_model_path = Path(exp_dir) / "models" / "final_model.pt"
         trainer.save_checkpoint(
-            final_model_path,
-            epoch=args.epochs - 1,
+            str(final_model_path),
+            epoch=config["training"]["num_epochs"] - 1,
             val_acc=results["accuracy"] * 100,
-            label_encoder=label_encoder,
+            label_encoder=data_info["label_encoder"],
             additional_data={
+                "config": config,
+                "feature_dims": data_info["feature_dims"],
+                "max_seq_length": data_info["max_seq_length"],
                 "training_history": training_history,
-                "final_metrics": final_results["evaluation_results"],
-                "feature_dims": feature_dims,
-                "max_seq_length": max_seq_length,
-                "target_gestures": target_gestures,
-                "non_target_gestures": non_target_gestures,
+                "target_gestures": data_info["target_gestures"],
+                "non_target_gestures": data_info["non_target_gestures"],
             },
         )
 
-        # Print final summary
-        end_time = time.time()
-        total_time = end_time - start_time
+        # Final summary
+        training_time = time.time() - start_time
+        final_accuracy = results["accuracy"] * 100
 
         print(f"\n{'='*60}")
-        print("TRAINING COMPLETED SUCCESSFULLY!")
+        print("🎉 TRAINING COMPLETED SUCCESSFULLY!")
         print(f"{'='*60}")
-        print(f"Total training time: {format_time(total_time)}")
-        print(f"Best validation accuracy: {training_history['best_val_accuracy']:.2f}%")
-        print(f"Final validation accuracy: {results['accuracy']*100:.2f}%")
-        print(f"Experiment directory: {exp_dir}")
-        print(f"Model saved: {final_model_path}")
+        print(
+            f"⏱️  Training time: {training_time:.1f} seconds ({training_time/60:.1f} minutes)",
+        )
+        print(f"🎯 Best validation accuracy: {trainer.best_val_acc:.2f}%")
+        print(f"📊 Final validation accuracy: {final_accuracy:.2f}%")
+        print(f"💾 Results saved to: {exp_dir}")
+        print(f"🤖 Final model saved to: {final_model_path}")
+        print(f"{'='*60}")
+
+        return 0
 
     except Exception as e:
-        print(f"\nERROR: Training failed with exception: {e}")
-        import traceback
-
+        print(f"\n❌ Training failed: {e}")
         traceback.print_exc()
         return 1
-
-    return 0
 
 
 if __name__ == "__main__":

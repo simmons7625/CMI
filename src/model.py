@@ -13,6 +13,12 @@ class SEBlock2D(nn.Module):
             nn.Linear(channels // reduction, channels, bias=False),
             nn.Sigmoid(),
         )
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
 
     def forward(self, x):
         b, c, _, _ = x.size()
@@ -81,6 +87,15 @@ class MBConv2D(nn.Module):
 
         self.conv = nn.Sequential(*layers)
         self.dropout = nn.Dropout2d(dropout_rate) if dropout_rate > 0 else nn.Identity()
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         if self.use_residual:
@@ -245,6 +260,19 @@ class TOFBranch(nn.Module):
         self.bn_head = nn.BatchNorm2d(1280)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.feature_proj = nn.Linear(1280, d_model)
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         # x shape: (batch_size, seq_len, 320) # 5 sensors * 64 values
@@ -263,14 +291,14 @@ class TOFBranch(nn.Module):
                 sensor_data = x[:, t, sensor, :].view(batch_size, 1, 8, 8)
 
                 # Apply EfficientNetB0 backbone
-                out = F.relu(self.bn_stem(self.stem(sensor_data)))
+                out = F.silu(self.bn_stem(self.stem(sensor_data)))
 
                 # Apply MBConv blocks
                 for mb_block in self.mb_blocks:
                     out = mb_block(out)
 
                 # Apply head convolution
-                out = F.relu(self.bn_head(self.conv_head(out)))
+                out = F.silu(self.bn_head(self.conv_head(out)))
 
                 # Global pooling and projection
                 out = self.global_pool(out)  # (batch_size, 1280, 1, 1)
@@ -294,6 +322,17 @@ class OtherSensorsBranch(nn.Module):
         self.attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, x):
         # x shape: (batch_size, seq_len, input_dim)
@@ -353,6 +392,17 @@ class GestureBranchedModel(nn.Module):
             nn.ReLU(),
             nn.Linear(d_model, num_classes),
         )
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm1d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
 
     def forward(self, tof_features, acc_features, rot_features, thm_features):
         # Process each branch
@@ -386,7 +436,6 @@ class GestureBranchedModel(nn.Module):
 
         # Apply normalization
         fused = self.fusion_norm(fused)
-
         # Global pooling over sequence dimension
         pooled = self.global_pool(fused).squeeze(-1)  # (batch_size, d_model*4)
 
