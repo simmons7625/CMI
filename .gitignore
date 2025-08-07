@@ -1,3 +1,171 @@
+# Claude Code
 .claude/
+
+# Dataset and large data files
 dataset/
+data/
+*.csv
+*.parquet
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Logs and caches
+logs/
+*.log
+*.out
+*.err
 wandb/
+mlruns/
+.tensorboard/
+lightning_logs/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints/
+
+# Model artifacts and experiments
+models/*.pt
+models/*.pth
+models/*.ckpt
+models/*.h5
+experiments/*/
+!experiments/.gitkeep
+!models/.gitkeep
+!logs/.gitkeep
+
+# Temporary files and outputs
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Test and coverage
+.coverage
+.pytest_cache/
+.tox/
+.nox/
+htmlcov/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Documentation builds
+docs/_build/
+.readthedocs/
+
+# PyCharm
+#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
+#  be added to the global gitignore or merged into this file.  For a more nuclear
+#  option (not recommended) you can uncomment the following to ignore the entire idea folder.
+#.idea/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# ML/AI specific
+*.onnx
+*.tflite
+*.pb
+*.pbtxt
+tensorboard_logs/
+checkpoints/
+saved_models/
+outputs/
+results/
+plots/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+!dataset/sensor.png
+
+# Pre-commit
+.pre-commit-cache/
+
+# Ruff
+.ruff_cache/

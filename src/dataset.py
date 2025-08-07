@@ -8,7 +8,7 @@ from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from .data_loader import FeatureProcessor
+from .feature_processor import FeatureProcessor
 
 
 class CMIDataset(Dataset):
