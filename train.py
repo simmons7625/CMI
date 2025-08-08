@@ -54,6 +54,7 @@ def load_and_process_data(config: dict):
 
     # Load data
     train_df = pl.read_csv(config["data"]["train_path"])
+    train_df = train_df.fill_null(-1.0).fill_nan(-1.0)
 
     # Prepare labels
     train_df, label_encoder, target_gestures, non_target_gestures = (
@@ -66,10 +67,13 @@ def load_and_process_data(config: dict):
 
     # Process sequences
     processor = SequenceProcessor()
-    sequences = processor.process_dataframe(train_df)
-
-    # Calculate max sequence length
+    num_samples = config["data"].get("num_samples")
     max_seq_length = config["model"].get("max_seq_length", 100)
+    sequences = processor.process_dataframe(
+        train_df,
+        num_samples=num_samples,
+        max_seq_length=max_seq_length,
+    )
 
     # Get feature dimensions
     feature_dims = get_enhanced_feature_dims(sequences)

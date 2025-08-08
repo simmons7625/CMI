@@ -1,6 +1,56 @@
+import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn
+
+
+class PositionalEncoding(nn.Module):
+    """Positional encoding that supports chunk start indices for proper sequence positioning."""
+
+    def __init__(self, d_model, max_seq_length=5000):
+        super().__init__()
+        self.d_model = d_model
+
+        # Create positional encoding matrix
+        pe = torch.zeros(max_seq_length, d_model)
+        position = torch.arange(0, max_seq_length, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(
+            torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model),
+        )
+
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)  # Add batch dimension
+
+        # Register as buffer so it moves with the model but isn't a parameter
+        self.register_buffer("pe", pe)
+
+    def forward(self, x, chunk_start_idx=None):
+        """Apply positional encoding to input tensor.
+
+        Args:
+            x: Input tensor of shape (batch_size, seq_len, d_model)
+            chunk_start_idx: Starting position indices for each sequence in the batch
+                           Shape: (batch_size,) or None for no offset
+
+        Returns:
+            x + positional_encoding: Tensor with positional encoding added
+        """
+        batch_size, seq_len, d_model = x.size()
+
+        if chunk_start_idx is not None:
+            # Add positional encoding with offset for each sequence
+            pos_encoding = torch.zeros_like(x)
+            for i in range(batch_size):
+                start_pos = chunk_start_idx[i].item()
+                end_pos = start_pos + seq_len
+                pos_encoding[i] = self.pe[0, start_pos:end_pos]
+        else:
+            # Standard positional encoding starting from 0
+            pos_encoding = self.pe[:, :seq_len, :].expand(batch_size, -1, -1)
+
+        return x + pos_encoding
 
 
 class SEBlock2D(nn.Module):
@@ -52,7 +102,7 @@ class MBConv2D(nn.Module):
                 [
                     nn.Conv2d(in_channels, hidden_dim, 1, bias=False),
                     nn.BatchNorm2d(hidden_dim),
-                    nn.ReLU6(inplace=True),
+                    nn.SiLU(inplace=True),
                 ],
             )
 
@@ -69,7 +119,7 @@ class MBConv2D(nn.Module):
                     bias=False,
                 ),
                 nn.BatchNorm2d(hidden_dim),
-                nn.ReLU6(inplace=True),
+                nn.SiLU(inplace=True),
             ],
         )
 
@@ -319,6 +369,7 @@ class OtherSensorsBranch(nn.Module):
     def __init__(self, input_dim, d_model=128, num_heads=8, dropout=0.1):
         super().__init__()
         self.input_proj = nn.Linear(input_dim, d_model)
+        self.pos_encoding = PositionalEncoding(d_model)
         self.attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
@@ -334,9 +385,10 @@ class OtherSensorsBranch(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, x):
+    def forward(self, x, chunk_start_idx=None):
         # x shape: (batch_size, seq_len, input_dim)
         x = self.input_proj(x)
+        x = self.pos_encoding(x, chunk_start_idx)
         attn_out, _ = self.attention(x, x, x)
         x = self.norm(x + self.dropout(attn_out))
         # Transpose to (batch_size, d_model, seq_len) for consistency with TOF branch
@@ -374,6 +426,12 @@ class GestureBranchedModel(nn.Module):
             d_model=d_model,
             num_heads=num_heads,
         )
+        # Positional encoding layers
+        self.tof_pos_encoding = PositionalEncoding(d_model)
+        self.acc_pos_encoding = PositionalEncoding(d_model)
+        self.rot_pos_encoding = PositionalEncoding(d_model)
+        self.thm_pos_encoding = PositionalEncoding(d_model)
+
         # Attention layers
         self.tof_attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
         self.acc_attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
@@ -404,18 +462,40 @@ class GestureBranchedModel(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, tof_features, acc_features, rot_features, thm_features):
+    def forward(
+        self,
+        tof_features,
+        acc_features,
+        rot_features,
+        thm_features,
+        chunk_start_idx=None,
+    ):
         # Process each branch
         tof_out = self.tof_branch(tof_features)  # (batch_size, d_model, seq_len)
-        acc_out = self.acc_branch(acc_features)  # (batch_size, d_model, seq_len)
-        rot_out = self.rot_branch(rot_features)  # (batch_size, d_model, seq_len)
-        thm_out = self.thm_branch(thm_features)  # (batch_size, d_model, seq_len)
+        acc_out = self.acc_branch(
+            acc_features,
+            chunk_start_idx,
+        )  # (batch_size, d_model, seq_len)
+        rot_out = self.rot_branch(
+            rot_features,
+            chunk_start_idx,
+        )  # (batch_size, d_model, seq_len)
+        thm_out = self.thm_branch(
+            thm_features,
+            chunk_start_idx,
+        )  # (batch_size, d_model, seq_len)
 
         # Apply attention - need to transpose for MultiheadAttention
         tof_out = tof_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
         acc_out = acc_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
         rot_out = rot_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
         thm_out = thm_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
+
+        # Add positional encoding
+        tof_out = self.tof_pos_encoding(tof_out, chunk_start_idx)
+        acc_out = self.acc_pos_encoding(acc_out, chunk_start_idx)
+        rot_out = self.rot_pos_encoding(rot_out, chunk_start_idx)
+        thm_out = self.thm_pos_encoding(thm_out, chunk_start_idx)
 
         tof_out = self.tof_attention(tof_out, tof_out, tof_out)[0]
         acc_out = self.acc_attention(acc_out, acc_out, acc_out)[0]

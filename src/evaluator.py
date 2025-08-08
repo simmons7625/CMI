@@ -357,6 +357,22 @@ class CMIEvaluator:
             "mean_entropy_incorrect": np.mean(entropy[~correct_mask]),
         }
 
+    def _make_json_serializable(self, obj):
+        """Recursively convert numpy types to JSON serializable types."""
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, dict):
+            return {
+                key: self._make_json_serializable(value) for key, value in obj.items()
+            }
+        if isinstance(obj, list):
+            return [self._make_json_serializable(item) for item in obj]
+        return obj
+
     def save_results(self, results: dict[str, Any], save_path: str):
         """Save evaluation results to file.
 
@@ -364,29 +380,8 @@ class CMIEvaluator:
             results: Results dictionary from evaluate()
             save_path: Path to save results
         """
-        # Convert numpy arrays to lists for JSON serialization
-        serializable_results = {}
-        for key, value in results.items():
-            if isinstance(value, np.ndarray):
-                serializable_results[key] = value.tolist()
-            elif key == "per_class_results":
-                # Handle per-class results
-                serializable_per_class = []
-                for class_result in value:
-                    serializable_class = {}
-                    for k, v in class_result.items():
-                        if isinstance(v, np.ndarray):
-                            serializable_class[k] = v.tolist()
-                        else:
-                            serializable_class[k] = (
-                                float(v) if isinstance(v, np.floating) else v
-                            )
-                    serializable_per_class.append(serializable_class)
-                serializable_results[key] = serializable_per_class
-            elif isinstance(value, np.floating):
-                serializable_results[key] = float(value)
-            else:
-                serializable_results[key] = value
+        # Recursively convert all numpy types to JSON serializable types
+        serializable_results = self._make_json_serializable(results)
 
         import json
 

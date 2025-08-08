@@ -91,12 +91,16 @@ class CMIDataset(Dataset):
             rot_data = rot_data[: self.max_length]
             thm_data = thm_data[: self.max_length]
 
+        # Get chunk start index for positional encoding
+        chunk_start_idx = sequence.get("chunk_start_idx", 0)
+
         return {
             "tof": torch.FloatTensor(tof_data),
             "acc": torch.FloatTensor(acc_data),
             "rot": torch.FloatTensor(rot_data),
             "thm": torch.FloatTensor(thm_data),
             "label": torch.LongTensor([label])[0],
+            "chunk_start_idx": torch.LongTensor([chunk_start_idx])[0],
         }
 
 
@@ -115,12 +119,15 @@ class SequenceProcessor:
     def process_dataframe(
         self,
         train_df: pl.DataFrame,
+        num_samples: int | None = None,
+        max_seq_length: int | None = None,
     ) -> list[dict]:
         """Process polars dataframe into sequences.
 
         Args:
             train_df: Training dataframe with gesture sequences
-            label_encoder: Fitted label encoder for gesture classes
+            num_samples: Maximum number of samples to process (None for all)
+            max_seq_length: Maximum sequence length for chunking (None for no chunking)
 
         Returns:
             List of sequence dictionaries
@@ -129,6 +136,10 @@ class SequenceProcessor:
 
         # Group by sequence_id and process each sequence
         grouped = train_df.group_by("sequence_id")
+
+        # Limit number of sequences if num_samples is specified
+        if num_samples is not None:
+            grouped = list(grouped)[:num_samples]
 
         for seq_id, group in tqdm(grouped, desc="Processing sequences"):
             try:
@@ -139,13 +150,23 @@ class SequenceProcessor:
                     group,
                 )
 
-                sequences.append(
-                    {
-                        "sequence_id": seq_id[0],
-                        "enhanced_data": enhanced_features,
-                        "label": gesture_id,
-                    },
-                )
+                # Apply chunking if max_seq_length is specified
+                if max_seq_length is not None:
+                    chunked_sequences = self._chunk_sequence(
+                        enhanced_features,
+                        gesture_id,
+                        seq_id[0],
+                        max_seq_length,
+                    )
+                    sequences.extend(chunked_sequences)
+                else:
+                    sequences.append(
+                        {
+                            "sequence_id": seq_id[0],
+                            "enhanced_data": enhanced_features,
+                            "label": gesture_id,
+                        },
+                    )
 
             except Exception as e:
                 print(f"Error processing sequence {seq_id[0]}: {e}")
@@ -153,15 +174,116 @@ class SequenceProcessor:
                 seq_data = group.select(
                     self.acc_cols + self.rot_cols + self.thm_cols + self.tof_cols,
                 ).to_numpy()
-                sequences.append(
+
+                # Apply chunking to fallback data if max_seq_length is specified
+                if max_seq_length is not None:
+                    chunked_sequences = self._chunk_original_sequence(
+                        seq_data,
+                        gesture_id,
+                        seq_id[0],
+                        max_seq_length,
+                    )
+                    sequences.extend(chunked_sequences)
+                else:
+                    sequences.append(
+                        {
+                            "sequence_id": seq_id[0],
+                            "data": seq_data,
+                            "label": gesture_id,
+                        },
+                    )
+
+        return sequences
+
+    def _chunk_sequence(
+        self,
+        enhanced_features: dict,
+        gesture_id: int,
+        sequence_id: str,
+        max_seq_length: int,
+    ) -> list[dict]:
+        """Chunk enhanced features into smaller sequences."""
+        tof_data = enhanced_features["tof"]
+        acc_data = enhanced_features["acc"]
+        rot_data = enhanced_features["rot"]
+        thm_data = enhanced_features["thm"]
+
+        seq_length = len(tof_data)
+        chunks = []
+
+        if seq_length <= max_seq_length:
+            # No chunking needed
+            chunks.append(
+                {
+                    "sequence_id": sequence_id,
+                    "enhanced_data": enhanced_features,
+                    "label": gesture_id,
+                    "chunk_start_idx": 0,
+                },
+            )
+        else:
+            # Split into chunks
+            num_chunks = (seq_length + max_seq_length - 1) // max_seq_length
+            for i in range(num_chunks):
+                start_idx = i * max_seq_length
+                end_idx = min((i + 1) * max_seq_length, seq_length)
+
+                chunk_features = {
+                    "tof": tof_data[start_idx:end_idx],
+                    "acc": acc_data[start_idx:end_idx],
+                    "rot": rot_data[start_idx:end_idx],
+                    "thm": thm_data[start_idx:end_idx],
+                }
+
+                chunks.append(
                     {
-                        "sequence_id": seq_id[0],
-                        "data": seq_data,
+                        "sequence_id": f"{sequence_id}_chunk_{i}",
+                        "enhanced_data": chunk_features,
                         "label": gesture_id,
+                        "chunk_start_idx": start_idx,
                     },
                 )
 
-        return sequences
+        return chunks
+
+    def _chunk_original_sequence(
+        self,
+        seq_data: np.ndarray,
+        gesture_id: int,
+        sequence_id: str,
+        max_seq_length: int,
+    ) -> list[dict]:
+        """Chunk original sequence data into smaller sequences."""
+        seq_length = len(seq_data)
+        chunks = []
+
+        if seq_length <= max_seq_length:
+            # No chunking needed
+            chunks.append(
+                {
+                    "sequence_id": sequence_id,
+                    "data": seq_data,
+                    "label": gesture_id,
+                    "chunk_start_idx": 0,
+                },
+            )
+        else:
+            # Split into chunks
+            num_chunks = (seq_length + max_seq_length - 1) // max_seq_length
+            for i in range(num_chunks):
+                start_idx = i * max_seq_length
+                end_idx = min((i + 1) * max_seq_length, seq_length)
+
+                chunks.append(
+                    {
+                        "sequence_id": f"{sequence_id}_chunk_{i}",
+                        "data": seq_data[start_idx:end_idx],
+                        "label": gesture_id,
+                        "chunk_start_idx": start_idx,
+                    },
+                )
+
+        return chunks
 
     def create_train_val_split(
         self,

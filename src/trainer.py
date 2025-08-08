@@ -84,10 +84,19 @@ class CMITrainer:
             rot_data = batch["rot"].to(self.device)
             thm_data = batch["thm"].to(self.device)
             labels = batch["label"].to(self.device)
+            chunk_start_idx = batch.get("chunk_start_idx")
+            if chunk_start_idx is not None:
+                chunk_start_idx = chunk_start_idx.to(self.device)
 
             # Forward pass
             self.optimizer.zero_grad()
-            outputs = self.model(tof_data, acc_data, rot_data, thm_data)
+            outputs = self.model(
+                tof_data,
+                acc_data,
+                rot_data,
+                thm_data,
+                chunk_start_idx,
+            )
             loss = self.criterion(outputs, labels)
 
             # Backward pass
@@ -146,9 +155,18 @@ class CMITrainer:
                 rot_data = batch["rot"].to(self.device)
                 thm_data = batch["thm"].to(self.device)
                 labels = batch["label"].to(self.device)
+                chunk_start_idx = batch.get("chunk_start_idx")
+                if chunk_start_idx is not None:
+                    chunk_start_idx = chunk_start_idx.to(self.device)
 
                 # Forward pass
-                outputs = self.model(tof_data, acc_data, rot_data, thm_data)
+                outputs = self.model(
+                    tof_data,
+                    acc_data,
+                    rot_data,
+                    thm_data,
+                    chunk_start_idx,
+                )
                 loss = self.criterion(outputs, labels)
 
                 # Statistics
