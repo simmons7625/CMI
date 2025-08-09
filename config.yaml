@@ -8,6 +8,7 @@ data:
   use_enhanced_features: true
   val_split: 0.2
   num_samples: null  # Maximum number of samples to process (null for all)
+  max_seq_length: 20  # Maximum length for chunking sequences during training
 
 # Model configuration
 model:
@@ -15,7 +16,7 @@ model:
   d_model: 128
   num_heads: 8
   num_layers: 2  # Number of transformer layers
-  max_seq_length: 20  # Will be determined dynamically from data
+  max_seq_length: 1000  # Maximum sequence length for positional encoding (should be >= longest raw sequence)
   dropout: 0.1  # Dropout rate for transformer
 
 # Training configuration

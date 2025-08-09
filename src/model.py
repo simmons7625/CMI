@@ -503,7 +503,6 @@ class GestureBranchedModel(nn.Module):
         d_model=128,
         num_heads=8,
         num_layers=1,
-        seq_len=None,
         acc_dim=4,
         rot_dim=8,
         thm_dim=5,
@@ -512,7 +511,6 @@ class GestureBranchedModel(nn.Module):
     ):
         super().__init__()
         self.d_model = d_model
-        self.seq_len = seq_len
         # Feature branches with configurable feature dimensions
         self.tof_branch = TOFBranch(d_model=d_model)
         self.acc_branch = OtherSensorsBranch(
@@ -637,7 +635,6 @@ def create_model(
     d_model=128,
     num_heads=8,
     num_layers=1,
-    seq_len=None,
     acc_dim=4,
     rot_dim=8,
     thm_dim=5,
@@ -651,7 +648,6 @@ def create_model(
         d_model (int): Model dimension (default: 128)
         num_heads (int): Number of attention heads (default: 8)
         num_layers (int): Number of transformer layers (default: 1)
-        seq_len (int, optional): Fixed sequence length for 2D attention
         acc_dim (int): Accelerometer feature dimension (default: 4)
         rot_dim (int): Rotation feature dimension (default: 8)
         thm_dim (int): Thermal feature dimension (default: 5)
@@ -666,7 +662,6 @@ def create_model(
         d_model=d_model,
         num_heads=num_heads,
         num_layers=num_layers,
-        seq_len=seq_len,
         acc_dim=acc_dim,
         rot_dim=rot_dim,
         thm_dim=thm_dim,

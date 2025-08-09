@@ -417,7 +417,6 @@ def create_model_config(
     d_model: int = 128,
     num_heads: int = 8,
     num_layers: int = 1,
-    seq_len: int | None = None,
     acc_dim: int = 4,
     rot_dim: int = 8,
     thm_dim: int = 5,
@@ -431,7 +430,6 @@ def create_model_config(
         d_model: Model dimension
         num_heads: Number of attention heads
         num_layers: Number of transformer layers
-        seq_len: Fixed sequence length (None for variable)
         acc_dim: Accelerometer feature dimension
         rot_dim: Rotation feature dimension
         thm_dim: Thermal feature dimension
@@ -446,7 +444,6 @@ def create_model_config(
         "d_model": d_model,
         "num_heads": num_heads,
         "num_layers": num_layers,
-        "seq_len": seq_len,
         "acc_dim": acc_dim,
         "rot_dim": rot_dim,
         "thm_dim": thm_dim,

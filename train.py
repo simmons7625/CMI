@@ -68,11 +68,14 @@ def load_and_process_data(config: dict):
     # Process sequences
     processor = SequenceProcessor()
     num_samples = config["data"].get("num_samples")
-    max_seq_length = config["model"].get("max_seq_length", 100)
+    chunk_length = config["data"].get(
+        "max_seq_length",
+        100,
+    )  # For chunking during training
     sequences = processor.process_dataframe(
         train_df,
         num_samples=num_samples,
-        max_seq_length=max_seq_length,
+        max_seq_length=chunk_length,
     )
 
     # Get feature dimensions
@@ -92,7 +95,7 @@ def load_and_process_data(config: dict):
         "train_sequences": train_sequences,
         "val_sequences": val_sequences,
         "label_encoder": label_encoder,
-        "max_seq_length": max_seq_length,
+        "max_seq_length": chunk_length,  # Return the chunk length used for training
         "feature_dims": feature_dims,
         "target_gestures": target_gestures,
         "non_target_gestures": non_target_gestures,
@@ -174,12 +177,17 @@ def main():
             d_model=config["model"]["d_model"],
             num_heads=config["model"]["num_heads"],
             num_layers=config["model"].get("num_layers", 1),
-            seq_len=data_info["max_seq_length"],
+            seq_len=data_info[
+                "max_seq_length"
+            ],  # Use chunk length for model's fixed sequence length
             acc_dim=data_info["feature_dims"]["acc"],
             rot_dim=data_info["feature_dims"]["rot"],
             thm_dim=data_info["feature_dims"]["thm"],
             dropout=config["model"].get("dropout", 0.1),
-            max_seq_length=config["model"].get("max_seq_length", 5000),
+            max_seq_length=config["model"].get(
+                "max_seq_length",
+                5000,
+            ),  # For positional encoding
         )
 
         # Create trainer configuration
