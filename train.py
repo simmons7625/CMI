@@ -177,9 +177,6 @@ def main():
             d_model=config["model"]["d_model"],
             num_heads=config["model"]["num_heads"],
             num_layers=config["model"].get("num_layers", 1),
-            seq_len=data_info[
-                "max_seq_length"
-            ],  # Use chunk length for model's fixed sequence length
             acc_dim=data_info["feature_dims"]["acc"],
             rot_dim=data_info["feature_dims"]["rot"],
             thm_dim=data_info["feature_dims"]["thm"],

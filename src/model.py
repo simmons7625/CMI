@@ -453,6 +453,74 @@ class TransformerEncoderLayer(nn.Module):
         return self.norm2(x + ffn_out)
 
 
+class FeatureSelectionAttention(nn.Module):
+    """Feature selection using multi-head attention to reduce dimensionality."""
+
+    def __init__(self, d_model, d_reduced, num_heads=4, dropout=0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.d_reduced = d_reduced
+
+        # Learnable query tokens for feature selection
+        self.query_tokens = nn.Parameter(torch.randn(1, d_reduced, d_model))
+
+        # Multi-head attention for feature selection
+        self.feature_attention = nn.MultiheadAttention(
+            d_model,
+            num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+
+        # Layer normalization and dropout
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(dropout)
+
+        # Projection to reduced dimension
+        self.projection = nn.Linear(d_model, d_reduced)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        nn.init.xavier_uniform_(self.query_tokens)
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # x shape: (batch_size, seq_len, d_model)
+        batch_size, seq_len, d_model = x.size()
+
+        # Expand query tokens for batch
+        queries = self.query_tokens.expand(
+            batch_size,
+            -1,
+            -1,
+        )  # (batch_size, d_reduced, d_model)
+
+        # Use input as keys and values, queries as learned feature selectors
+        selected_features, _ = self.feature_attention(
+            queries,  # Query: learnable feature selectors
+            x,  # Key: input features
+            x,  # Value: input features
+        )
+
+        # Apply normalization and projection
+        selected_features = self.norm(selected_features)
+        selected_features = self.dropout(selected_features)
+        selected_features = self.projection(
+            selected_features,
+        )  # (batch_size, d_reduced, d_reduced)
+
+        # Transpose to (batch_size, d_reduced, seq_len) for consistency
+        return selected_features.transpose(1, 2)
+
+
 class CustomTransformer(nn.Module):
     """Custom Transformer with positional encoding and configurable number of layers."""
 
@@ -496,6 +564,62 @@ class CustomTransformer(nn.Module):
         return x
 
 
+class FeatureSelectionTransformer(nn.Module):
+    """Transformer with feature selection step before sequential processing."""
+
+    def __init__(
+        self,
+        d_model,
+        d_reduced,
+        num_heads,
+        num_layers=1,
+        d_ff=None,
+        dropout=0.1,
+        max_seq_length=5000,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.d_reduced = d_reduced
+
+        # Feature selection step
+        self.feature_selector = FeatureSelectionAttention(
+            d_model,
+            d_reduced,
+            num_heads=num_heads // 2,
+            dropout=dropout,
+        )
+
+        # Positional encoding for reduced features
+        self.pos_encoding = PositionalEncoding(d_reduced, max_seq_length)
+
+        # Sequential transformer layers on reduced features
+        self.layers = nn.ModuleList(
+            [
+                TransformerEncoderLayer(d_reduced, num_heads, d_ff, dropout)
+                for _ in range(num_layers)
+            ],
+        )
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, chunk_start_idx=None):
+        # x shape: (batch_size, seq_len, d_model)
+
+        # Step 1: Feature selection (d_model -> d_reduced)
+        x = self.feature_selector(x)  # (batch_size, d_reduced, seq_len)
+        x = x.transpose(1, 2)  # (batch_size, seq_len, d_reduced)
+
+        # Step 2: Add positional encoding to reduced features
+        x = self.pos_encoding(x, chunk_start_idx)
+        x = self.dropout(x)
+
+        # Step 3: Apply sequential transformer layers on reduced features
+        for layer in self.layers:
+            x = layer(x)
+
+        return x  # (batch_size, seq_len, d_reduced)
+
+
 class GestureBranchedModel(nn.Module):
     def __init__(
         self,
@@ -529,46 +653,28 @@ class GestureBranchedModel(nn.Module):
             dropout=dropout,
         )
 
-        # Custom Transformer layers for each branch
-        self.tof_transformer = CustomTransformer(
-            d_model,
-            num_heads,
-            num_layers,
-            dropout=dropout,
-            max_seq_length=max_seq_length,
-        )
-        self.acc_transformer = CustomTransformer(
-            d_model,
-            num_heads,
-            num_layers,
-            dropout=dropout,
-            max_seq_length=max_seq_length,
-        )
-        self.rot_transformer = CustomTransformer(
-            d_model,
-            num_heads,
-            num_layers,
-            dropout=dropout,
-            max_seq_length=max_seq_length,
-        )
-        self.thm_transformer = CustomTransformer(
-            d_model,
-            num_heads,
-            num_layers,
-            dropout=dropout,
-            max_seq_length=max_seq_length,
-        )
-
         # Feature fusion by concatenation (4 branches)
         self.fusion_norm = nn.BatchNorm1d(d_model * 4)
+
+        # Feature Selection Transformer: d_model*4 -> d_model -> transformer
+        self.feature_transformer = FeatureSelectionTransformer(
+            d_model * 4,  # Input: concatenated features from all 4 branches
+            d_model,  # Output: reduced back to original d_model dimension
+            num_heads,
+            num_layers,
+            dropout=dropout,
+            max_seq_length=max_seq_length,
+        )
 
         # Global pooling and classification
         self.global_pool = nn.AdaptiveAvgPool1d(1)
         self.classifier = nn.Sequential(
-            nn.Linear(d_model * 4, d_model * 2),
+            nn.Linear(d_model, d_model * 2),
             nn.ReLU(),
+            nn.Dropout(dropout),
             nn.Linear(d_model * 2, d_model),
             nn.ReLU(),
+            nn.Dropout(dropout),
             nn.Linear(d_model, num_classes),
         )
         self._init_weights()
@@ -591,31 +697,13 @@ class GestureBranchedModel(nn.Module):
         thm_features,
         chunk_start_idx=None,
     ):
-        # Process each branch
+        # Step 1: Process each sensor branch
         tof_out = self.tof_branch(tof_features)  # (batch_size, d_model, seq_len)
         acc_out = self.acc_branch(acc_features)  # (batch_size, d_model, seq_len)
         rot_out = self.rot_branch(rot_features)  # (batch_size, d_model, seq_len)
         thm_out = self.thm_branch(thm_features)  # (batch_size, d_model, seq_len)
 
-        # Apply custom transformers - need to transpose for transformers
-        tof_out = tof_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
-        acc_out = acc_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
-        rot_out = rot_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
-        thm_out = thm_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
-
-        # Apply custom transformers with positional encoding
-        tof_out = self.tof_transformer(tof_out, chunk_start_idx)
-        acc_out = self.acc_transformer(acc_out, chunk_start_idx)
-        rot_out = self.rot_transformer(rot_out, chunk_start_idx)
-        thm_out = self.thm_transformer(thm_out, chunk_start_idx)
-
-        # Transpose back for concatenation
-        tof_out = tof_out.transpose(1, 2)  # (batch_size, d_model, seq_len)
-        acc_out = acc_out.transpose(1, 2)  # (batch_size, d_model, seq_len)
-        rot_out = rot_out.transpose(1, 2)  # (batch_size, d_model, seq_len)
-        thm_out = thm_out.transpose(1, 2)  # (batch_size, d_model, seq_len)
-
-        # Concatenate features along the channel dimension
+        # Step 2: Concatenate all sensor features
         fused = torch.cat(
             (tof_out, acc_out, rot_out, thm_out),
             dim=1,
@@ -623,10 +711,22 @@ class GestureBranchedModel(nn.Module):
 
         # Apply normalization
         fused = self.fusion_norm(fused)
-        # Global pooling over sequence dimension
-        pooled = self.global_pool(fused).squeeze(-1)  # (batch_size, d_model*4)
 
-        # Classification to 18 classes
+        # Step 3: Transpose for transformer input (batch_size, seq_len, 4*d_model)
+        fused = fused.transpose(1, 2)
+
+        # Step 4: Apply feature selection transformer (reduces dim and applies sequential transformers)
+        transformed = self.feature_transformer(
+            fused,
+            chunk_start_idx,
+        )  # (batch_size, seq_len, d_model)
+
+        # Step 5: Global pooling over sequence dimension
+        pooled = self.global_pool(transformed.transpose(1, 2)).squeeze(
+            -1,
+        )  # (batch_size, d_model)
+
+        # Step 6: Final classification
         return self.classifier(pooled)
 
 

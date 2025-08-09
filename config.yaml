@@ -8,21 +8,21 @@ data:
   use_enhanced_features: true
   val_split: 0.2
   num_samples: null  # Maximum number of samples to process (null for all)
-  max_seq_length: 20  # Maximum length for chunking sequences during training
+  max_seq_length: 30  # Maximum length for chunking sequences during training
 
 # Model configuration
 model:
   num_classes: 18
-  d_model: 128
+  d_model: 128  # Feature dimension for each sensor branch
   num_heads: 8
-  num_layers: 2  # Number of transformer layers
+  num_layers: 7  # Number of transformer layers
   max_seq_length: 1000  # Maximum sequence length for positional encoding (should be >= longest raw sequence)
   dropout: 0.1  # Dropout rate for transformer
 
 # Training configuration
 training:
-  batch_size: 32
-  num_epochs: 50
+  batch_size: 16
+  num_epochs: 10
   learning_rate: 0.0001
   weight_decay: 0.001
   random_seed: 42
