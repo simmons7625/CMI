@@ -188,8 +188,16 @@ def main():
             gradient_clip_norm=config["training"]["gradient_clip_norm"],
         )
 
-        # Create trainer
-        trainer = CMITrainer(model_config, trainer_config, device="auto")
+        # Create trainer with wandb config
+        use_wandb = config.get("logging", {}).get("use_wandb", False)
+        wandb_config = config.get("logging", {}).get("wandb", {})
+        trainer = CMITrainer(
+            model_config,
+            trainer_config,
+            device="auto",
+            use_wandb=use_wandb,
+            wandb_config=wandb_config,
+        )
 
         # Print model info
         param_info = trainer.count_parameters()
@@ -305,6 +313,11 @@ def main():
         print(f"\n❌ Training failed: {e}")
         traceback.print_exc()
         return 1
+
+    finally:
+        # Clean up wandb run
+        if "trainer" in locals():
+            trainer.finish()
 
 
 if __name__ == "__main__":

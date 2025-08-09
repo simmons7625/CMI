@@ -9,6 +9,11 @@ from tqdm import tqdm
 
 from .model import create_model
 
+try:
+    import wandb
+except ImportError:
+    wandb = None
+
 if TYPE_CHECKING:
     from torch.utils.data import DataLoader
 
@@ -16,13 +21,22 @@ if TYPE_CHECKING:
 class CMITrainer:
     """Trainer class for CMI gesture recognition model."""
 
-    def __init__(self, model_config: dict, training_config: dict, device: str = "auto"):
+    def __init__(
+        self,
+        model_config: dict,
+        training_config: dict,
+        device: str = "auto",
+        use_wandb: bool = False,
+        wandb_config: dict | None = None,
+    ):
         """Initialize trainer.
 
         Args:
             model_config: Model configuration parameters
             training_config: Training configuration parameters
             device: Device to use ('auto', 'cuda', 'cpu')
+            use_wandb: Whether to use wandb for logging
+            wandb_config: wandb configuration dictionary
         """
         # Set device
         if device == "auto":
@@ -33,6 +47,18 @@ class CMITrainer:
         # Store configs
         self.model_config = model_config
         self.training_config = training_config
+        self.use_wandb = use_wandb and wandb is not None
+
+        # Initialize wandb if requested
+        if self.use_wandb:
+            wandb_config = wandb_config or {}
+            wandb.init(
+                project=wandb_config.get("project", "cmi-gesture-recognition"),
+                entity=wandb_config.get("entity"),
+                tags=wandb_config.get("tags", []),
+                notes=wandb_config.get("notes", ""),
+                config={**model_config, **training_config},
+            )
 
         # Initialize model
         self.model = create_model(**model_config).to(self.device)
@@ -129,6 +155,17 @@ class CMITrainer:
         avg_loss = train_loss / len(train_loader)
         accuracy = 100.0 * train_correct / train_total
 
+        # Log training metrics to wandb
+        if self.use_wandb:
+            wandb.log(
+                {
+                    "epoch": self.current_epoch + 1,
+                    "train_loss": avg_loss,
+                    "train_accuracy": accuracy,
+                    "learning_rate": self.optimizer.param_groups[0]["lr"],
+                },
+            )
+
         return avg_loss, accuracy
 
     def validate_epoch(self, val_loader: DataLoader) -> tuple[float, float]:
@@ -187,7 +224,21 @@ class CMITrainer:
         avg_loss = val_loss / len(val_loader)
         accuracy = 100.0 * val_correct / val_total
 
+        # Log validation metrics to wandb
+        if self.use_wandb:
+            wandb.log(
+                {
+                    "val_loss": avg_loss,
+                    "val_accuracy": accuracy,
+                },
+            )
+
         return avg_loss, accuracy
+
+    def finish(self):
+        """Clean up wandb run."""
+        if self.use_wandb:
+            wandb.finish()
 
     def train(
         self,
