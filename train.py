@@ -173,10 +173,13 @@ def main():
             num_classes=config["model"]["num_classes"],
             d_model=config["model"]["d_model"],
             num_heads=config["model"]["num_heads"],
+            num_layers=config["model"].get("num_layers", 1),
             seq_len=data_info["max_seq_length"],
             acc_dim=data_info["feature_dims"]["acc"],
             rot_dim=data_info["feature_dims"]["rot"],
             thm_dim=data_info["feature_dims"]["thm"],
+            dropout=config["model"].get("dropout", 0.1),
+            max_seq_length=config["model"].get("max_seq_length", 5000),
         )
 
         # Create trainer configuration

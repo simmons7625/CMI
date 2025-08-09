@@ -14,7 +14,9 @@ model:
   num_classes: 18
   d_model: 128
   num_heads: 8
+  num_layers: 2  # Number of transformer layers
   max_seq_length: 20  # Will be determined dynamically from data
+  dropout: 0.1  # Dropout rate for transformer
 
 # Training configuration
 training:

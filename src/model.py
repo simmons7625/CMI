@@ -366,13 +366,69 @@ class TOFBranch(nn.Module):
 
 
 class OtherSensorsBranch(nn.Module):
-    def __init__(self, input_dim, d_model=128, num_heads=8, dropout=0.1):
+    def __init__(self, input_dim, d_model=128, dropout=0.1):
         super().__init__()
-        self.input_proj = nn.Linear(input_dim, d_model)
-        self.pos_encoding = PositionalEncoding(d_model)
-        self.attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
-        self.norm = nn.LayerNorm(d_model)
+        # 2-layer linear model with ReLU activation
+        self.feature_extractor = nn.Sequential(
+            nn.Linear(input_dim, d_model // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(d_model // 2, d_model),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x, chunk_start_idx=None):
+        # x shape: (batch_size, seq_len, input_dim)
+        batch_size, seq_len, input_dim = x.size()
+
+        # Apply feature extraction to each timestep
+        x = x.view(-1, input_dim)  # (batch_size * seq_len, input_dim)
+        x = self.feature_extractor(x)  # (batch_size * seq_len, d_model)
+        x = x.view(batch_size, seq_len, -1)  # (batch_size, seq_len, d_model)
+
+        # Transpose to (batch_size, d_model, seq_len) for consistency with TOF branch
+        return x.transpose(1, 2)
+
+
+class TransformerEncoderLayer(nn.Module):
+    """Custom Transformer encoder layer with positional encoding."""
+
+    def __init__(self, d_model, num_heads, d_ff=None, dropout=0.1):
+        super().__init__()
+        self.d_model = d_model
+        self.d_ff = d_ff or 4 * d_model
+
+        # Multi-head attention
+        self.self_attention = nn.MultiheadAttention(
+            d_model,
+            num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+
+        # Feed forward network
+        self.ffn = nn.Sequential(
+            nn.Linear(d_model, self.d_ff),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(self.d_ff, d_model),
+            nn.Dropout(dropout),
+        )
+
+        # Layer normalization
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
+
         self._init_weights()
 
     def _init_weights(self):
@@ -385,14 +441,59 @@ class OtherSensorsBranch(nn.Module):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
+    def forward(self, x):
+        # x shape: (batch_size, seq_len, d_model)
+
+        # Multi-head attention with residual connection
+        attn_out, _ = self.self_attention(x, x, x)
+        x = self.norm1(x + self.dropout(attn_out))
+
+        # Feed forward with residual connection
+        ffn_out = self.ffn(x)
+        return self.norm2(x + ffn_out)
+
+
+class CustomTransformer(nn.Module):
+    """Custom Transformer with positional encoding and configurable number of layers."""
+
+    def __init__(
+        self,
+        d_model,
+        num_heads,
+        num_layers=1,
+        d_ff=None,
+        dropout=0.1,
+        max_seq_length=5000,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.num_layers = num_layers
+
+        # Positional encoding
+        self.pos_encoding = PositionalEncoding(d_model, max_seq_length)
+
+        # Transformer encoder layers
+        self.layers = nn.ModuleList(
+            [
+                TransformerEncoderLayer(d_model, num_heads, d_ff, dropout)
+                for _ in range(num_layers)
+            ],
+        )
+
+        self.dropout = nn.Dropout(dropout)
+
     def forward(self, x, chunk_start_idx=None):
-        # x shape: (batch_size, seq_len, input_dim)
-        x = self.input_proj(x)
+        # x shape: (batch_size, seq_len, d_model)
+
+        # Add positional encoding
         x = self.pos_encoding(x, chunk_start_idx)
-        attn_out, _ = self.attention(x, x, x)
-        x = self.norm(x + self.dropout(attn_out))
-        # Transpose to (batch_size, d_model, seq_len) for consistency with TOF branch
-        return x.transpose(1, 2)
+        x = self.dropout(x)
+
+        # Apply transformer layers
+        for layer in self.layers:
+            x = layer(x)
+
+        return x
 
 
 class GestureBranchedModel(nn.Module):
@@ -401,10 +502,13 @@ class GestureBranchedModel(nn.Module):
         num_classes=18,
         d_model=128,
         num_heads=8,
+        num_layers=1,
         seq_len=None,
         acc_dim=4,
         rot_dim=8,
         thm_dim=5,
+        dropout=0.1,
+        max_seq_length=5000,
     ):
         super().__init__()
         self.d_model = d_model
@@ -414,29 +518,48 @@ class GestureBranchedModel(nn.Module):
         self.acc_branch = OtherSensorsBranch(
             input_dim=acc_dim,
             d_model=d_model,
-            num_heads=num_heads,
+            dropout=dropout,
         )
         self.rot_branch = OtherSensorsBranch(
             input_dim=rot_dim,
             d_model=d_model,
-            num_heads=num_heads,
+            dropout=dropout,
         )
         self.thm_branch = OtherSensorsBranch(
             input_dim=thm_dim,
             d_model=d_model,
-            num_heads=num_heads,
+            dropout=dropout,
         )
-        # Positional encoding layers
-        self.tof_pos_encoding = PositionalEncoding(d_model)
-        self.acc_pos_encoding = PositionalEncoding(d_model)
-        self.rot_pos_encoding = PositionalEncoding(d_model)
-        self.thm_pos_encoding = PositionalEncoding(d_model)
 
-        # Attention layers
-        self.tof_attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
-        self.acc_attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
-        self.rot_attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
-        self.thm_attention = nn.MultiheadAttention(d_model, num_heads, batch_first=True)
+        # Custom Transformer layers for each branch
+        self.tof_transformer = CustomTransformer(
+            d_model,
+            num_heads,
+            num_layers,
+            dropout=dropout,
+            max_seq_length=max_seq_length,
+        )
+        self.acc_transformer = CustomTransformer(
+            d_model,
+            num_heads,
+            num_layers,
+            dropout=dropout,
+            max_seq_length=max_seq_length,
+        )
+        self.rot_transformer = CustomTransformer(
+            d_model,
+            num_heads,
+            num_layers,
+            dropout=dropout,
+            max_seq_length=max_seq_length,
+        )
+        self.thm_transformer = CustomTransformer(
+            d_model,
+            num_heads,
+            num_layers,
+            dropout=dropout,
+            max_seq_length=max_seq_length,
+        )
 
         # Feature fusion by concatenation (4 branches)
         self.fusion_norm = nn.BatchNorm1d(d_model * 4)
@@ -472,35 +595,21 @@ class GestureBranchedModel(nn.Module):
     ):
         # Process each branch
         tof_out = self.tof_branch(tof_features)  # (batch_size, d_model, seq_len)
-        acc_out = self.acc_branch(
-            acc_features,
-            chunk_start_idx,
-        )  # (batch_size, d_model, seq_len)
-        rot_out = self.rot_branch(
-            rot_features,
-            chunk_start_idx,
-        )  # (batch_size, d_model, seq_len)
-        thm_out = self.thm_branch(
-            thm_features,
-            chunk_start_idx,
-        )  # (batch_size, d_model, seq_len)
+        acc_out = self.acc_branch(acc_features)  # (batch_size, d_model, seq_len)
+        rot_out = self.rot_branch(rot_features)  # (batch_size, d_model, seq_len)
+        thm_out = self.thm_branch(thm_features)  # (batch_size, d_model, seq_len)
 
-        # Apply attention - need to transpose for MultiheadAttention
+        # Apply custom transformers - need to transpose for transformers
         tof_out = tof_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
         acc_out = acc_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
         rot_out = rot_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
         thm_out = thm_out.transpose(1, 2)  # (batch_size, seq_len, d_model)
 
-        # Add positional encoding
-        tof_out = self.tof_pos_encoding(tof_out, chunk_start_idx)
-        acc_out = self.acc_pos_encoding(acc_out, chunk_start_idx)
-        rot_out = self.rot_pos_encoding(rot_out, chunk_start_idx)
-        thm_out = self.thm_pos_encoding(thm_out, chunk_start_idx)
-
-        tof_out = self.tof_attention(tof_out, tof_out, tof_out)[0]
-        acc_out = self.acc_attention(acc_out, acc_out, acc_out)[0]
-        rot_out = self.rot_attention(rot_out, rot_out, rot_out)[0]
-        thm_out = self.thm_attention(thm_out, thm_out, thm_out)[0]
+        # Apply custom transformers with positional encoding
+        tof_out = self.tof_transformer(tof_out, chunk_start_idx)
+        acc_out = self.acc_transformer(acc_out, chunk_start_idx)
+        rot_out = self.rot_transformer(rot_out, chunk_start_idx)
+        thm_out = self.thm_transformer(thm_out, chunk_start_idx)
 
         # Transpose back for concatenation
         tof_out = tof_out.transpose(1, 2)  # (batch_size, d_model, seq_len)
@@ -527,10 +636,13 @@ def create_model(
     num_classes=18,
     d_model=128,
     num_heads=8,
+    num_layers=1,
     seq_len=None,
     acc_dim=4,
     rot_dim=8,
     thm_dim=5,
+    dropout=0.1,
+    max_seq_length=5000,
 ):
     """Create a GestureBranchedModel with specified parameters.
 
@@ -538,10 +650,13 @@ def create_model(
         num_classes (int): Number of gesture classes (default: 18)
         d_model (int): Model dimension (default: 128)
         num_heads (int): Number of attention heads (default: 8)
+        num_layers (int): Number of transformer layers (default: 1)
         seq_len (int, optional): Fixed sequence length for 2D attention
         acc_dim (int): Accelerometer feature dimension (default: 4)
         rot_dim (int): Rotation feature dimension (default: 8)
         thm_dim (int): Thermal feature dimension (default: 5)
+        dropout (float): Dropout rate (default: 0.1)
+        max_seq_length (int): Maximum sequence length for positional encoding (default: 5000)
 
     Returns:
         GestureBranchedModel: Initialized model
@@ -550,8 +665,11 @@ def create_model(
         num_classes=num_classes,
         d_model=d_model,
         num_heads=num_heads,
+        num_layers=num_layers,
         seq_len=seq_len,
         acc_dim=acc_dim,
         rot_dim=rot_dim,
         thm_dim=thm_dim,
+        dropout=dropout,
+        max_seq_length=max_seq_length,
     )

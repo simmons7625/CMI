@@ -416,10 +416,13 @@ def create_model_config(
     num_classes: int = 18,
     d_model: int = 128,
     num_heads: int = 8,
+    num_layers: int = 1,
     seq_len: int | None = None,
     acc_dim: int = 4,
     rot_dim: int = 8,
     thm_dim: int = 5,
+    dropout: float = 0.1,
+    max_seq_length: int = 5000,
 ) -> dict:
     """Create model configuration dictionary.
 
@@ -427,10 +430,13 @@ def create_model_config(
         num_classes: Number of gesture classes
         d_model: Model dimension
         num_heads: Number of attention heads
+        num_layers: Number of transformer layers
         seq_len: Fixed sequence length (None for variable)
         acc_dim: Accelerometer feature dimension
         rot_dim: Rotation feature dimension
         thm_dim: Thermal feature dimension
+        dropout: Dropout rate
+        max_seq_length: Maximum sequence length for positional encoding
 
     Returns:
         Model configuration dictionary
@@ -439,8 +445,11 @@ def create_model_config(
         "num_classes": num_classes,
         "d_model": d_model,
         "num_heads": num_heads,
+        "num_layers": num_layers,
         "seq_len": seq_len,
         "acc_dim": acc_dim,
         "rot_dim": rot_dim,
         "thm_dim": thm_dim,
+        "dropout": dropout,
+        "max_seq_length": max_seq_length,
     }
