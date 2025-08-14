@@ -175,6 +175,7 @@ def main():
         model_config = create_model_config(
             num_classes=config["model"]["num_classes"],
             d_model=config["model"]["d_model"],
+            d_reduced=config["model"]["d_reduced"],
             num_heads=config["model"]["num_heads"],
             num_layers=config["model"].get("num_layers", 1),
             acc_dim=data_info["feature_dims"]["acc"],

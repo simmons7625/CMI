@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import polars as pl
 import torch
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import Dataset
 from tqdm import tqdm
@@ -291,7 +290,7 @@ class SequenceProcessor:
         test_size: float = 0.2,
         random_state: int = 42,
     ) -> tuple:
-        """Create stratified train/validation split.
+        """Create stratified train/validation split with equal split ratios per label.
 
         Args:
             sequences: List of processed sequences
@@ -301,20 +300,69 @@ class SequenceProcessor:
         Returns:
             Tuple of (train_sequences, val_sequences)
         """
-        labels = [seq["label"] for seq in sequences]
+        return stratified_split_equal_ratio(sequences, test_size, random_state)
 
-        # Stratified train/validation split
-        train_indices, val_indices = train_test_split(
-            range(len(sequences)),
-            test_size=test_size,
-            random_state=random_state,
-            stratify=labels,
+
+def stratified_split_equal_ratio(
+    sequences: list[dict],
+    test_size: float = 0.2,
+    random_state: int = 42,
+) -> tuple[list[dict], list[dict]]:
+    """Create stratified train/validation split with equal split ratios per label.
+
+    This function ensures that each label is split with exactly the same ratio,
+    avoiding the imbalanced splits that can occur with sklearn's train_test_split.
+
+    Args:
+        sequences: List of processed sequences
+        test_size: Fraction of data for validation (0.0 to 1.0)
+        random_state: Random seed for reproducibility
+
+    Returns:
+        Tuple of (train_sequences, val_sequences)
+    """
+    np.random.seed(random_state)
+
+    # Group sequences by label
+    label_groups = {}
+    for i, seq in enumerate(sequences):
+        label = seq["label"]
+        if label not in label_groups:
+            label_groups[label] = []
+        label_groups[label].append(i)
+
+    train_indices = []
+    val_indices = []
+
+    # Split each label group with the exact same ratio
+    for label, indices in label_groups.items():
+        # Shuffle indices for this label
+        shuffled_indices = np.array(indices)
+        np.random.shuffle(shuffled_indices)
+
+        # Calculate split point
+        n_samples = len(shuffled_indices)
+        n_val = int(np.round(n_samples * test_size))
+        n_train = n_samples - n_val
+
+        # Ensure we have at least one sample in each split if possible
+        if n_samples >= 2:
+            n_val = max(1, n_val)
+            n_train = n_samples - n_val
+
+        # Split indices
+        val_indices.extend(shuffled_indices[:n_val].tolist())
+        train_indices.extend(shuffled_indices[n_val:].tolist())
+
+        print(
+            f"Label {label}: {n_train} train, {n_val} val ({n_val/(n_train+n_val)*100:.1f}% val)",
         )
 
-        train_sequences = [sequences[i] for i in train_indices]
-        val_sequences = [sequences[i] for i in val_indices]
+    # Create train and validation sequences
+    train_sequences = [sequences[i] for i in train_indices]
+    val_sequences = [sequences[i] for i in val_indices]
 
-        return train_sequences, val_sequences
+    return train_sequences, val_sequences
 
 
 def prepare_gesture_labels(train_df: pl.DataFrame) -> tuple:
