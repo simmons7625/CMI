@@ -521,49 +521,6 @@ class FeatureSelectionAttention(nn.Module):
         return selected_features.transpose(1, 2)
 
 
-class CustomTransformer(nn.Module):
-    """Custom Transformer with positional encoding and configurable number of layers."""
-
-    def __init__(
-        self,
-        d_model,
-        num_heads,
-        num_layers=1,
-        d_ff=None,
-        dropout=0.1,
-        max_seq_length=5000,
-    ):
-        super().__init__()
-        self.d_model = d_model
-        self.num_layers = num_layers
-
-        # Positional encoding
-        self.pos_encoding = PositionalEncoding(d_model, max_seq_length)
-
-        # Transformer encoder layers
-        self.layers = nn.ModuleList(
-            [
-                TransformerEncoderLayer(d_model, num_heads, d_ff, dropout)
-                for _ in range(num_layers)
-            ],
-        )
-
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x, chunk_start_idx=None):
-        # x shape: (batch_size, seq_len, d_model)
-
-        # Add positional encoding
-        x = self.pos_encoding(x, chunk_start_idx)
-        x = self.dropout(x)
-
-        # Apply transformer layers
-        for layer in self.layers:
-            x = layer(x)
-
-        return x
-
-
 class FeatureSelectionTransformer(nn.Module):
     """Transformer with feature selection step before sequential processing."""
 
@@ -620,11 +577,88 @@ class FeatureSelectionTransformer(nn.Module):
         return x  # (batch_size, seq_len, d_reduced)
 
 
+class FeatureSelectionGRU(nn.Module):
+    """GRU with feature selection step before sequential processing."""
+
+    def __init__(
+        self,
+        d_model,
+        d_reduced,
+        num_layers=1,
+        dropout=0.1,
+        bidirectional=True,
+        max_seq_length=5000,
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.d_reduced = d_reduced
+        self.bidirectional = bidirectional
+
+        # Feature selection step (using dummy num_heads=4 for attention)
+        self.feature_selector = FeatureSelectionAttention(
+            d_model,
+            d_reduced,
+            num_heads=4,
+            dropout=dropout,
+        )
+
+        # Positional encoding for reduced features
+        self.pos_encoding = PositionalEncoding(d_reduced, max_seq_length)
+
+        # GRU layers on reduced features
+        self.gru = nn.GRU(
+            input_size=d_reduced,
+            hidden_size=d_reduced // (2 if bidirectional else 1),
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0,
+            bidirectional=bidirectional,
+            batch_first=True,
+        )
+
+        # Layer normalization and dropout
+        self.norm = nn.LayerNorm(d_reduced)
+        self.dropout = nn.Dropout(dropout)
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.GRU):
+                for name, param in m.named_parameters():
+                    if "weight_ih" in name:
+                        nn.init.xavier_uniform_(param.data)
+                    elif "weight_hh" in name:
+                        nn.init.orthogonal_(param.data)
+                    elif "bias" in name:
+                        nn.init.constant_(param.data, 0)
+            elif isinstance(m, nn.LayerNorm):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+    def forward(self, x, chunk_start_idx=None):
+        # x shape: (batch_size, seq_len, d_model)
+
+        # Step 1: Feature selection (d_model -> d_reduced)
+        x = self.feature_selector(x)  # (batch_size, d_reduced, seq_len)
+        x = x.transpose(1, 2)  # (batch_size, seq_len, d_reduced)
+
+        # Step 2: Add positional encoding to reduced features
+        x = self.pos_encoding(x, chunk_start_idx)
+        x = self.dropout(x)
+
+        # Step 3: Apply GRU on reduced features
+        gru_out, _ = self.gru(x)  # (batch_size, seq_len, d_reduced)
+
+        # Step 4: Apply normalization
+        return self.norm(gru_out)  # (batch_size, seq_len, d_reduced)
+
+
 class GestureBranchedModel(nn.Module):
     def __init__(
         self,
         num_classes=18,
         d_model=128,
+        d_reduced=None,
         num_heads=8,
         num_layers=1,
         acc_dim=4,
@@ -632,9 +666,11 @@ class GestureBranchedModel(nn.Module):
         thm_dim=5,
         dropout=0.1,
         max_seq_length=5000,
+        sequence_processor="transformer",  # "transformer" or "gru"
     ):
         super().__init__()
         self.d_model = d_model
+        self.d_reduced = d_reduced if d_reduced is not None else d_model
         # Feature branches with configurable feature dimensions
         self.tof_branch = TOFBranch(d_model=d_model)
         self.acc_branch = OtherSensorsBranch(
@@ -656,26 +692,39 @@ class GestureBranchedModel(nn.Module):
         # Feature fusion by concatenation (4 branches)
         self.fusion_norm = nn.BatchNorm1d(d_model * 4)
 
-        # Feature Selection Transformer: d_model*4 -> d_model -> transformer
-        self.feature_transformer = FeatureSelectionTransformer(
-            d_model * 4,  # Input: concatenated features from all 4 branches
-            d_model,  # Output: reduced back to original d_model dimension
-            num_heads,
-            num_layers,
-            dropout=dropout,
-            max_seq_length=max_seq_length,
-        )
+        # Feature Selection Processor: d_model*4 -> d_reduced -> transformer/gru
+        if sequence_processor.lower() == "gru":
+            self.feature_processor = FeatureSelectionGRU(
+                d_model * 4,  # Input: concatenated features from all 4 branches
+                self.d_reduced,  # Output: reduced to d_reduced dimension
+                num_layers=num_layers,
+                dropout=dropout,
+                bidirectional=True,
+                max_seq_length=max_seq_length,
+            )
+        elif sequence_processor.lower() == "transformer":
+            self.feature_processor = FeatureSelectionTransformer(
+                d_model * 4,  # Input: concatenated features from all 4 branches
+                self.d_reduced,  # Output: reduced to d_reduced dimension
+                num_heads,
+                num_layers,
+                dropout=dropout,
+                max_seq_length=max_seq_length,
+            )
+        else:
+            msg = f"Unknown sequence_processor: {sequence_processor}. Choose 'transformer' or 'gru'."
+            raise ValueError(msg)
 
         # Global pooling and classification
         self.global_pool = nn.AdaptiveAvgPool1d(1)
         self.classifier = nn.Sequential(
-            nn.Linear(d_model, d_model * 2),
+            nn.Linear(self.d_reduced, self.d_reduced * 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(d_model * 2, d_model),
+            nn.Linear(self.d_reduced * 2, self.d_reduced),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(d_model, num_classes),
+            nn.Linear(self.d_reduced, num_classes),
         )
         self._init_weights()
 
@@ -712,19 +761,19 @@ class GestureBranchedModel(nn.Module):
         # Apply normalization
         fused = self.fusion_norm(fused)
 
-        # Step 3: Transpose for transformer input (batch_size, seq_len, 4*d_model)
+        # Step 3: Transpose for processor input (batch_size, seq_len, 4*d_model)
         fused = fused.transpose(1, 2)
 
-        # Step 4: Apply feature selection transformer (reduces dim and applies sequential transformers)
-        transformed = self.feature_transformer(
+        # Step 4: Apply feature selection processor (reduces dim and applies sequential processing)
+        transformed = self.feature_processor(
             fused,
             chunk_start_idx,
-        )  # (batch_size, seq_len, d_model)
+        )  # (batch_size, seq_len, d_reduced)
 
         # Step 5: Global pooling over sequence dimension
         pooled = self.global_pool(transformed.transpose(1, 2)).squeeze(
             -1,
-        )  # (batch_size, d_model)
+        )  # (batch_size, d_reduced)
 
         # Step 6: Final classification
         return self.classifier(pooled)
@@ -733,6 +782,7 @@ class GestureBranchedModel(nn.Module):
 def create_model(
     num_classes=18,
     d_model=128,
+    d_reduced=128,
     num_heads=8,
     num_layers=1,
     acc_dim=4,
@@ -740,19 +790,22 @@ def create_model(
     thm_dim=5,
     dropout=0.1,
     max_seq_length=5000,
+    sequence_processor="transformer",
 ):
     """Create a GestureBranchedModel with specified parameters.
 
     Args:
         num_classes (int): Number of gesture classes (default: 18)
         d_model (int): Model dimension (default: 128)
+        d_reduced (int): Reduced feature dimension after feature selection (default: d_model)
         num_heads (int): Number of attention heads (default: 8)
-        num_layers (int): Number of transformer layers (default: 1)
+        num_layers (int): Number of transformer/GRU layers (default: 1)
         acc_dim (int): Accelerometer feature dimension (default: 4)
         rot_dim (int): Rotation feature dimension (default: 8)
         thm_dim (int): Thermal feature dimension (default: 5)
         dropout (float): Dropout rate (default: 0.1)
         max_seq_length (int): Maximum sequence length for positional encoding (default: 5000)
+        sequence_processor (str): Sequence processor type, "transformer" or "gru" (default: "transformer")
 
     Returns:
         GestureBranchedModel: Initialized model
@@ -760,6 +813,7 @@ def create_model(
     return GestureBranchedModel(
         num_classes=num_classes,
         d_model=d_model,
+        d_reduced=d_reduced,
         num_heads=num_heads,
         num_layers=num_layers,
         acc_dim=acc_dim,
@@ -767,4 +821,5 @@ def create_model(
         thm_dim=thm_dim,
         dropout=dropout,
         max_seq_length=max_seq_length,
+        sequence_processor=sequence_processor,
     )

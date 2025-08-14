@@ -415,6 +415,7 @@ def create_trainer_config(
 def create_model_config(
     num_classes: int = 18,
     d_model: int = 128,
+    d_reduced: int = 128,
     num_heads: int = 8,
     num_layers: int = 1,
     acc_dim: int = 4,
@@ -428,6 +429,7 @@ def create_model_config(
     Args:
         num_classes: Number of gesture classes
         d_model: Model dimension
+        d_reduced: Reduced feature dimension after feature selection
         num_heads: Number of attention heads
         num_layers: Number of transformer layers
         acc_dim: Accelerometer feature dimension
@@ -442,6 +444,7 @@ def create_model_config(
     return {
         "num_classes": num_classes,
         "d_model": d_model,
+        "d_reduced": d_reduced,
         "num_heads": num_heads,
         "num_layers": num_layers,
         "acc_dim": acc_dim,
