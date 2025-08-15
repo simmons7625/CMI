@@ -43,7 +43,7 @@ class CMIDataset(Dataset):
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         sequence = self.sequences[idx]
-        label = sequence["label"]
+        label = sequence.get("label", -1)  # Default to -1 if label is missing
 
         if "enhanced_data" in sequence:
             # Use enhanced features
@@ -94,6 +94,7 @@ class CMIDataset(Dataset):
         chunk_start_idx = sequence.get("chunk_start_idx", 0)
 
         return {
+            "sequence_id": sequence["sequence_id"],
             "tof": torch.FloatTensor(tof_data),
             "acc": torch.FloatTensor(acc_data),
             "rot": torch.FloatTensor(rot_data),
@@ -117,14 +118,14 @@ class SequenceProcessor:
 
     def process_dataframe(
         self,
-        train_df: pl.DataFrame,
+        df: pl.DataFrame,
         num_samples: int | None = None,
         max_seq_length: int | None = None,
     ) -> list[dict]:
         """Process polars dataframe into sequences.
 
         Args:
-            train_df: Training dataframe with gesture sequences
+            df: Training dataframe with gesture sequences
             num_samples: Maximum number of samples to process (None for all)
             max_seq_length: Maximum sequence length for chunking (None for no chunking)
 
@@ -134,7 +135,7 @@ class SequenceProcessor:
         sequences = []
 
         # Group by sequence_id and process each sequence
-        grouped = train_df.group_by("sequence_id")
+        grouped = df.group_by("sequence_id")
 
         # Limit number of sequences if num_samples is specified
         if num_samples is not None:
@@ -236,7 +237,7 @@ class SequenceProcessor:
 
                 chunks.append(
                     {
-                        "sequence_id": f"{sequence_id}_chunk_{i}",
+                        "sequence_id": f"{sequence_id}",
                         "enhanced_data": chunk_features,
                         "label": gesture_id,
                         "chunk_start_idx": start_idx,
@@ -275,7 +276,7 @@ class SequenceProcessor:
 
                 chunks.append(
                     {
-                        "sequence_id": f"{sequence_id}_chunk_{i}",
+                        "sequence_id": f"{sequence_id}",
                         "data": seq_data[start_idx:end_idx],
                         "label": gesture_id,
                         "chunk_start_idx": start_idx,
@@ -365,11 +366,11 @@ def stratified_split_equal_ratio(
     return train_sequences, val_sequences
 
 
-def prepare_gesture_labels(train_df: pl.DataFrame) -> tuple:
+def prepare_gesture_labels(df: pl.DataFrame) -> tuple:
     """Prepare gesture labels and label encoder.
 
     Args:
-        train_df: Training dataframe
+        df: Training dataframe
 
     Returns:
         Tuple of (updated_dataframe, label_encoder, target_gestures, non_target_gestures)
@@ -401,13 +402,13 @@ def prepare_gesture_labels(train_df: pl.DataFrame) -> tuple:
 
     # Create label encoder
     label_encoder = LabelEncoder()
-    train_df = train_df.with_columns(
-        pl.Series(label_encoder.fit_transform(train_df["gesture"].to_numpy())).alias(
+    df = df.with_columns(
+        pl.Series(label_encoder.fit_transform(df["gesture"].to_numpy())).alias(
             "gesture_id",
         ),
     )
 
-    return train_df, label_encoder, target_gestures, non_target_gestures
+    return df, label_encoder, target_gestures, non_target_gestures
 
 
 def get_enhanced_feature_dims(sequences: list[dict]) -> dict[str, int]:
