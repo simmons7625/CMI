@@ -365,6 +365,298 @@ class TOFBranch(nn.Module):
         return x.transpose(1, 2)  # (batch_size, d_model, seq_len) for 2D attention
 
 
+class TOFBranchB3(nn.Module):
+    def __init__(self, num_sensors=5, values_per_sensor=64, d_model=128):
+        super().__init__()
+        self.num_sensors = num_sensors
+        self.values_per_sensor = values_per_sensor
+        self.d_model = d_model
+
+        # EfficientNetB3 stem - deeper stem
+        self.stem = nn.Conv2d(1, 40, 3, stride=2, padding=1, bias=False)
+        self.bn_stem = nn.BatchNorm2d(40)
+
+        # EfficientNetB3 MBConv blocks - scaled up from B0
+        self.mb_blocks = nn.ModuleList(
+            [
+                # Stage 1: MBConv1, k3x3, s1, e1, i40, o24, se0.25 (repeat 2)
+                MBConv2D(
+                    40,
+                    24,
+                    expand_ratio=1,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    24,
+                    24,
+                    expand_ratio=1,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                # Stage 2: MBConv6, k3x3, s2, e6, i24, o32, se0.25 (repeat 3)
+                MBConv2D(
+                    24,
+                    32,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=2,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    32,
+                    32,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    32,
+                    32,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                # Stage 3: MBConv6, k5x5, s2, e6, i32, o48, se0.25 (repeat 3)
+                MBConv2D(
+                    32,
+                    48,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=2,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    48,
+                    48,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    48,
+                    48,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                # Stage 4: MBConv6, k3x3, s2, e6, i48, o96, se0.25 (repeat 5)
+                MBConv2D(
+                    48,
+                    96,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=2,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    96,
+                    96,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    96,
+                    96,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    96,
+                    96,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    96,
+                    96,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                # Stage 5: MBConv6, k5x5, s1, e6, i96, o136, se0.25 (repeat 5)
+                MBConv2D(
+                    96,
+                    136,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    136,
+                    136,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    136,
+                    136,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    136,
+                    136,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    136,
+                    136,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                # Stage 6: MBConv6, k5x5, s2, e6, i136, o232, se0.25 (repeat 6)
+                MBConv2D(
+                    136,
+                    232,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=2,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    232,
+                    232,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    232,
+                    232,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    232,
+                    232,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    232,
+                    232,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    232,
+                    232,
+                    expand_ratio=6,
+                    kernel_size=5,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                # Stage 7: MBConv6, k3x3, s1, e6, i232, o384, se0.25 (repeat 2)
+                MBConv2D(
+                    232,
+                    384,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+                MBConv2D(
+                    384,
+                    384,
+                    expand_ratio=6,
+                    kernel_size=3,
+                    stride=1,
+                    se_ratio=0.25,
+                ),
+            ],
+        )
+
+        # EfficientNetB3 head - scaled up features
+        self.conv_head = nn.Conv2d(384, 1536, 1, bias=False)
+        self.bn_head = nn.BatchNorm2d(1536)
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.feature_proj = nn.Linear(1536, d_model)
+        self._init_weights()
+
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    def forward(self, x):
+        # x shape: (batch_size, seq_len, 320) # 5 sensors * 64 values
+        batch_size, seq_len, _ = x.size()
+
+        # Reshape to process all sensors and timesteps
+        x = x.view(batch_size, seq_len, self.num_sensors, self.values_per_sensor)
+
+        # Process each sensor-timestep combination
+        outputs = []
+        for t in range(seq_len):
+            timestep_features = []
+
+            for sensor in range(self.num_sensors):
+                # Extract sensor data and reshape to 8x8 grid
+                sensor_data = x[:, t, sensor, :].view(batch_size, 1, 8, 8)
+
+                # Apply EfficientNetB3 backbone
+                out = F.silu(self.bn_stem(self.stem(sensor_data)))
+
+                # Apply MBConv blocks
+                for mb_block in self.mb_blocks:
+                    out = mb_block(out)
+
+                # Apply head convolution
+                out = F.silu(self.bn_head(self.conv_head(out)))
+
+                # Global pooling and projection
+                out = self.global_pool(out)  # (batch_size, 1536, 1, 1)
+                out = out.view(batch_size, -1)  # (batch_size, 1536)
+                sensor_feat = self.feature_proj(out)  # (batch_size, d_model)
+                timestep_features.append(sensor_feat)
+
+            # Average sensor features for this timestep
+            timestep_feat = torch.stack(timestep_features, dim=1).mean(dim=1)
+            outputs.append(timestep_feat)
+
+        # Stack to get (batch_size, seq_len, d_model), then transpose for 2D attention
+        x = torch.stack(outputs, dim=1)  # (batch_size, seq_len, d_model)
+        return x.transpose(1, 2)  # (batch_size, d_model, seq_len) for 2D attention
+
+
 class OtherSensorsBranch(nn.Module):
     def __init__(self, input_dim, d_model=128, dropout=0.1):
         super().__init__()
@@ -667,12 +959,19 @@ class GestureBranchedModel(nn.Module):
         dropout=0.1,
         max_seq_length=5000,
         sequence_processor="transformer",  # "transformer" or "gru"
+        tof_backbone="b0",  # "b0" or "b3" - choose EfficientNet backbone
     ):
         super().__init__()
         self.d_model = d_model
         self.d_reduced = d_reduced if d_reduced is not None else d_model
         # Feature branches with configurable feature dimensions
-        self.tof_branch = TOFBranch(d_model=d_model)
+        if tof_backbone.lower() == "b3":
+            self.tof_branch = TOFBranchB3(d_model=d_model)
+        elif tof_backbone.lower() == "b0":
+            self.tof_branch = TOFBranch(d_model=d_model)
+        else:
+            msg = f"Unknown tof_backbone: {tof_backbone}. Choose 'b0' or 'b3'."
+            raise ValueError(msg)
         self.acc_branch = OtherSensorsBranch(
             input_dim=acc_dim,
             d_model=d_model,
@@ -791,6 +1090,7 @@ def create_model(
     dropout=0.1,
     max_seq_length=5000,
     sequence_processor="transformer",
+    tof_backbone="b0",
 ):
     """Create a GestureBranchedModel with specified parameters.
 
@@ -806,6 +1106,7 @@ def create_model(
         dropout (float): Dropout rate (default: 0.1)
         max_seq_length (int): Maximum sequence length for positional encoding (default: 5000)
         sequence_processor (str): Sequence processor type, "transformer" or "gru" (default: "transformer")
+        tof_backbone (str): TOF backbone architecture, "b0" or "b3" (default: "b0")
 
     Returns:
         GestureBranchedModel: Initialized model
@@ -822,4 +1123,5 @@ def create_model(
         dropout=dropout,
         max_seq_length=max_seq_length,
         sequence_processor=sequence_processor,
+        tof_backbone=tof_backbone,
     )

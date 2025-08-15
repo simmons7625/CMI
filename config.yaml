@@ -16,14 +16,15 @@ model:
   d_model: 128  # Feature dimension for each sensor branch
   d_reduced: 256  # Reduced feature dimension after feature selection (null defaults to d_model)
   num_heads: 8
-  num_layers: 2  # Number of transformer/GRU layers
+  num_layers: 5  # Number of transformer/GRU layers
   max_seq_length: 1000  # Maximum sequence length for positional encoding (should be >= longest raw sequence)
   dropout: 0.2  # Dropout rate for transformer/GRU
-  sequence_processor: "gru"  # "transformer" or "gru" - choose sequence processing method
+  sequence_processor: "transformer"  # "transformer" or "gru" - choose sequence processing method
+  tof_backbone: "b0"  # "b0" or "b3" - choose EfficientNet backbone for TOF branch
 
 # Training configuration
 training:
-  batch_size: 64
+  batch_size: 8
   num_epochs: 30
   learning_rate: 0.0001
   weight_decay: 0.001

@@ -423,6 +423,8 @@ def create_model_config(
     thm_dim: int = 5,
     dropout: float = 0.1,
     max_seq_length: int = 5000,
+    sequence_processor: str = "transformer",
+    tof_backbone: str = "b0",
 ) -> dict:
     """Create model configuration dictionary.
 
@@ -437,6 +439,8 @@ def create_model_config(
         thm_dim: Thermal feature dimension
         dropout: Dropout rate
         max_seq_length: Maximum sequence length for positional encoding
+        sequence_processor: Sequence processor type ("transformer" or "gru")
+        tof_backbone: TOF backbone architecture ("b0" or "b3")
 
     Returns:
         Model configuration dictionary
@@ -452,4 +456,6 @@ def create_model_config(
         "thm_dim": thm_dim,
         "dropout": dropout,
         "max_seq_length": max_seq_length,
+        "sequence_processor": sequence_processor,
+        "tof_backbone": tof_backbone,
     }

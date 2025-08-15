@@ -186,6 +186,8 @@ def main():
                 "max_seq_length",
                 5000,
             ),  # For positional encoding
+            sequence_processor=config["model"].get("sequence_processor", "transformer"),
+            tof_backbone=config["model"].get("tof_backbone", "b0"),
         )
 
         # Create trainer configuration
