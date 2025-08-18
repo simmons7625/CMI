@@ -104,17 +104,15 @@ class CMITrainer:
         train_pbar = tqdm(train_loader, desc=f"Epoch {self.current_epoch+1} [Train]")
 
         for batch in train_pbar:
-            # Move to device
-            tof_data = batch["tof"].to(self.device)
-            acc_data = batch["acc"].to(self.device)
-            rot_data = batch["rot"].to(self.device)
-            thm_data = batch["thm"].to(self.device)
-            labels = batch["label"].to(self.device)
+            tof_data = batch["tof"].to(self.device)  # (batch_size, seq_len, 320)
+            acc_data = batch["acc"].to(self.device)  # (batch_size, seq_len, 3)
+            rot_data = batch["rot"].to(self.device)  # (batch_size, seq_len, 4)
+            thm_data = batch["thm"].to(self.device)  # (batch_size, seq_len, 5)
+            labels = batch["label"].to(self.device)  # (batch_size,)
             chunk_start_idx = batch.get("chunk_start_idx")
             if chunk_start_idx is not None:
                 chunk_start_idx = chunk_start_idx.to(self.device)
 
-            # Forward pass
             self.optimizer.zero_grad()
             outputs = self.model(
                 tof_data,
@@ -122,10 +120,9 @@ class CMITrainer:
                 rot_data,
                 thm_data,
                 chunk_start_idx,
-            )
+            )  # (batch_size, num_classes)
             loss = self.criterion(outputs, labels)
 
-            # Backward pass
             loss.backward()
 
             # Gradient clipping
@@ -186,24 +183,22 @@ class CMITrainer:
             val_pbar = tqdm(val_loader, desc=f"Epoch {self.current_epoch+1} [Val]")
 
             for batch in val_pbar:
-                # Move to device
-                tof_data = batch["tof"].to(self.device)
-                acc_data = batch["acc"].to(self.device)
-                rot_data = batch["rot"].to(self.device)
-                thm_data = batch["thm"].to(self.device)
-                labels = batch["label"].to(self.device)
+                tof_data = batch["tof"].to(self.device)  # (batch_size, seq_len, 320)
+                acc_data = batch["acc"].to(self.device)  # (batch_size, seq_len, 3)
+                rot_data = batch["rot"].to(self.device)  # (batch_size, seq_len, 4)
+                thm_data = batch["thm"].to(self.device)  # (batch_size, seq_len, 5)
+                labels = batch["label"].to(self.device)  # (batch_size,)
                 chunk_start_idx = batch.get("chunk_start_idx")
                 if chunk_start_idx is not None:
                     chunk_start_idx = chunk_start_idx.to(self.device)
 
-                # Forward pass
                 outputs = self.model(
                     tof_data,
                     acc_data,
                     rot_data,
                     thm_data,
                     chunk_start_idx,
-                )
+                )  # (batch_size, num_classes)
                 loss = self.criterion(outputs, labels)
 
                 # Statistics

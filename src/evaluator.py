@@ -55,17 +55,23 @@ class CMIEvaluator:
 
         with torch.no_grad():
             for batch in tqdm(data_loader, desc="Generating predictions"):
-                # Move to device
-                tof_data = batch["tof"].to(self.device)
-                acc_data = batch["acc"].to(self.device)
-                rot_data = batch["rot"].to(self.device)
-                thm_data = batch["thm"].to(self.device)
-                labels = batch["label"].to(self.device)
+                tof_data = batch["tof"].to(self.device)  # (batch_size, seq_len, 320)
+                acc_data = batch["acc"].to(self.device)  # (batch_size, seq_len, 3)
+                rot_data = batch["rot"].to(self.device)  # (batch_size, seq_len, 4)
+                thm_data = batch["thm"].to(self.device)  # (batch_size, seq_len, 5)
+                labels = batch["label"].to(self.device)  # (batch_size,)
 
-                # Forward pass
-                outputs = self.model(tof_data, acc_data, rot_data, thm_data)
-                probabilities = torch.softmax(outputs, dim=1)
-                _, predicted = torch.max(outputs, 1)
+                outputs = self.model(
+                    tof_data,
+                    acc_data,
+                    rot_data,
+                    thm_data,
+                )  # (batch_size, num_classes)
+                probabilities = torch.softmax(
+                    outputs,
+                    dim=1,
+                )  # (batch_size, num_classes)
+                _, predicted = torch.max(outputs, 1)  # (batch_size,)
 
                 all_predictions.extend(predicted.cpu().numpy())
                 all_labels.extend(labels.cpu().numpy())

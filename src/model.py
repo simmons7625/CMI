@@ -736,11 +736,11 @@ class TransformerEncoderLayer(nn.Module):
     def forward(self, x):
         # x shape: (batch_size, seq_len, d_model)
 
-        # Multi-head attention with residual connection
+        # Multi-head attention
         attn_out, _ = self.self_attention(x, x, x)
         x = self.norm1(x + self.dropout(attn_out))
 
-        # Feed forward with residual connection
+        # Feed forward
         ffn_out = self.ffn(x)
         return self.norm2(x + ffn_out)
 
@@ -795,26 +795,26 @@ class FeatureSelectionAttention(nn.Module):
             -1,
         )  # (batch_size, d_reduced, d_model)
 
-        # Use input as keys and values, queries as learned feature selectors
+        # Attention-based feature selection
         selected_features, _ = self.feature_attention(
             queries,  # Query: learnable feature selectors
             x,  # Key: input features
             x,  # Value: input features
         )
 
-        # Apply normalization and projection
+        # Normalize and project
         selected_features = self.norm(selected_features)
         selected_features = self.dropout(selected_features)
         selected_features = self.projection(
             selected_features,
         )  # (batch_size, d_reduced, d_reduced)
 
-        # Transpose to (batch_size, d_reduced, seq_len) for consistency
+        # Transpose output
         return selected_features.transpose(1, 2)
 
 
 class FeatureSelectionTransformer(nn.Module):
-    """Transformer with feature selection step before sequential processing."""
+    """Transformer with feature selection step after sequential processing."""
 
     def __init__(
         self,
@@ -838,13 +838,13 @@ class FeatureSelectionTransformer(nn.Module):
             dropout=dropout,
         )
 
-        # Positional encoding for reduced features
-        self.pos_encoding = PositionalEncoding(d_reduced, max_seq_length)
+        # Positional encoding for full features
+        self.pos_encoding = PositionalEncoding(d_model, max_seq_length)
 
-        # Sequential transformer layers on reduced features
+        # Sequential transformer layers on full features
         self.layers = nn.ModuleList(
             [
-                TransformerEncoderLayer(d_reduced, num_heads, d_ff, dropout)
+                TransformerEncoderLayer(d_model, num_heads, d_ff, dropout)
                 for _ in range(num_layers)
             ],
         )
@@ -854,23 +854,21 @@ class FeatureSelectionTransformer(nn.Module):
     def forward(self, x, chunk_start_idx=None):
         # x shape: (batch_size, seq_len, d_model)
 
-        # Step 1: Feature selection (d_model -> d_reduced)
-        x = self.feature_selector(x)  # (batch_size, d_reduced, seq_len)
-        x = x.transpose(1, 2)  # (batch_size, seq_len, d_reduced)
-
-        # Step 2: Add positional encoding to reduced features
+        # Add positional encoding
         x = self.pos_encoding(x, chunk_start_idx)
         x = self.dropout(x)
 
-        # Step 3: Apply sequential transformer layers on reduced features
+        # Apply transformer layers
         for layer in self.layers:
             x = layer(x)
 
-        return x  # (batch_size, seq_len, d_reduced)
+        # Feature selection after sequence processing
+        x = self.feature_selector(x)  # (batch_size, d_reduced, seq_len)
+        return x.transpose(1, 2)  # (batch_size, seq_len, d_reduced)
 
 
 class FeatureSelectionGRU(nn.Module):
-    """GRU with feature selection step before sequential processing."""
+    """GRU with feature selection step after sequential processing."""
 
     def __init__(
         self,
@@ -879,14 +877,13 @@ class FeatureSelectionGRU(nn.Module):
         num_layers=1,
         dropout=0.1,
         bidirectional=True,
-        max_seq_length=5000,
     ):
         super().__init__()
         self.d_model = d_model
         self.d_reduced = d_reduced
         self.bidirectional = bidirectional
 
-        # Feature selection step (using dummy num_heads=4 for attention)
+        # Feature selection layer
         self.feature_selector = FeatureSelectionAttention(
             d_model,
             d_reduced,
@@ -894,13 +891,10 @@ class FeatureSelectionGRU(nn.Module):
             dropout=dropout,
         )
 
-        # Positional encoding for reduced features
-        self.pos_encoding = PositionalEncoding(d_reduced, max_seq_length)
-
-        # GRU layers on reduced features
+        # GRU layers on full features
         self.gru = nn.GRU(
-            input_size=d_reduced,
-            hidden_size=d_reduced // (2 if bidirectional else 1),
+            input_size=d_model,
+            hidden_size=d_model // (2 if bidirectional else 1),
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0,
             bidirectional=bidirectional,
@@ -908,7 +902,7 @@ class FeatureSelectionGRU(nn.Module):
         )
 
         # Layer normalization and dropout
-        self.norm = nn.LayerNorm(d_reduced)
+        self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
 
         self._init_weights()
@@ -930,19 +924,18 @@ class FeatureSelectionGRU(nn.Module):
     def forward(self, x, chunk_start_idx=None):
         # x shape: (batch_size, seq_len, d_model)
 
-        # Step 1: Feature selection (d_model -> d_reduced)
-        x = self.feature_selector(x)  # (batch_size, d_reduced, seq_len)
-        x = x.transpose(1, 2)  # (batch_size, seq_len, d_reduced)
-
-        # Step 2: Add positional encoding to reduced features
-        x = self.pos_encoding(x, chunk_start_idx)
+        # Apply dropout
         x = self.dropout(x)
 
-        # Step 3: Apply GRU on reduced features
-        gru_out, _ = self.gru(x)  # (batch_size, seq_len, d_reduced)
+        # Apply GRU
+        gru_out, _ = self.gru(x)  # (batch_size, seq_len, d_model)
 
-        # Step 4: Apply normalization
-        return self.norm(gru_out)  # (batch_size, seq_len, d_reduced)
+        # Normalize
+        gru_out = self.norm(gru_out)
+
+        # Feature selection after sequence processing
+        x = self.feature_selector(gru_out)  # (batch_size, d_reduced, seq_len)
+        return x.transpose(1, 2)  # (batch_size, seq_len, d_reduced)
 
 
 class GestureBranchedModel(nn.Module):
@@ -999,7 +992,6 @@ class GestureBranchedModel(nn.Module):
                 num_layers=num_layers,
                 dropout=dropout,
                 bidirectional=True,
-                max_seq_length=max_seq_length,
             )
         elif sequence_processor.lower() == "transformer":
             self.feature_processor = FeatureSelectionTransformer(
@@ -1045,13 +1037,13 @@ class GestureBranchedModel(nn.Module):
         thm_features,
         chunk_start_idx=None,
     ):
-        # Step 1: Process each sensor branch
+        # Process sensor branches
         tof_out = self.tof_branch(tof_features)  # (batch_size, d_model, seq_len)
         acc_out = self.acc_branch(acc_features)  # (batch_size, d_model, seq_len)
         rot_out = self.rot_branch(rot_features)  # (batch_size, d_model, seq_len)
         thm_out = self.thm_branch(thm_features)  # (batch_size, d_model, seq_len)
 
-        # Step 2: Concatenate all sensor features
+        # Concatenate features
         fused = torch.cat(
             (tof_out, acc_out, rot_out, thm_out),
             dim=1,
@@ -1060,21 +1052,21 @@ class GestureBranchedModel(nn.Module):
         # Apply normalization
         fused = self.fusion_norm(fused)
 
-        # Step 3: Transpose for processor input (batch_size, seq_len, 4*d_model)
+        # Transpose for processor
         fused = fused.transpose(1, 2)
 
-        # Step 4: Apply feature selection processor (reduces dim and applies sequential processing)
+        # Apply processor with feature selection
         transformed = self.feature_processor(
             fused,
             chunk_start_idx,
         )  # (batch_size, seq_len, d_reduced)
 
-        # Step 5: Global pooling over sequence dimension
+        # Global pooling
         pooled = self.global_pool(transformed.transpose(1, 2)).squeeze(
             -1,
         )  # (batch_size, d_reduced)
 
-        # Step 6: Final classification
+        # Classification
         return self.classifier(pooled)
 
 

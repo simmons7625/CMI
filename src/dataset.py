@@ -95,12 +95,12 @@ class CMIDataset(Dataset):
 
         return {
             "sequence_id": sequence["sequence_id"],
-            "tof": torch.FloatTensor(tof_data),
-            "acc": torch.FloatTensor(acc_data),
-            "rot": torch.FloatTensor(rot_data),
-            "thm": torch.FloatTensor(thm_data),
-            "label": torch.LongTensor([label])[0],
-            "chunk_start_idx": torch.LongTensor([chunk_start_idx])[0],
+            "tof": torch.FloatTensor(tof_data),  # (seq_len, 320)
+            "acc": torch.FloatTensor(acc_data),  # (seq_len, 3)
+            "rot": torch.FloatTensor(rot_data),  # (seq_len, 4)
+            "thm": torch.FloatTensor(thm_data),  # (seq_len, 5)
+            "label": torch.LongTensor([label])[0],  # scalar
+            "chunk_start_idx": torch.LongTensor([chunk_start_idx])[0],  # scalar
         }
 
 
