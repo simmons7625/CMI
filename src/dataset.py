@@ -144,7 +144,7 @@ class SequenceProcessor:
         for seq_id, group in tqdm(grouped, desc="Processing sequences"):
             try:
                 if "gesture_id" not in group.columns:
-                    gesture_id = None
+                    gesture_id = -1
                 else:
                     gesture_id = group["gesture_id"][0]
 
