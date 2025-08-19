@@ -143,7 +143,10 @@ class SequenceProcessor:
 
         for seq_id, group in tqdm(grouped, desc="Processing sequences"):
             try:
-                gesture_id = group["gesture_id"][0]
+                if "gesture_id" not in group.columns:
+                    gesture_id = None
+                else:
+                    gesture_id = group["gesture_id"][0]
 
                 # Create enhanced features using FeatureProcessor
                 enhanced_features = self.feature_processor.create_sequence_features(
