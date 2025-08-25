@@ -69,7 +69,7 @@ def load_and_process_data(config: dict):
     processor = SequenceProcessor()
     num_samples = config["data"].get("num_samples")
     chunk_length = config["data"].get(
-        "max_seq_length",
+        "chunk_size",
         100,
     )  # For chunking during training
     sequences = processor.process_dataframe(

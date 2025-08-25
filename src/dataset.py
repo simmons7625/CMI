@@ -5,7 +5,6 @@ import polars as pl
 import torch
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import Dataset
-from tqdm import tqdm
 
 from .feature_processor import FeatureProcessor
 
@@ -141,7 +140,7 @@ class SequenceProcessor:
         if num_samples is not None:
             grouped = list(grouped)[:num_samples]
 
-        for seq_id, group in tqdm(grouped, desc="Processing sequences"):
+        for seq_id, group in grouped:
             try:
                 if "gesture_id" not in group.columns:
                     gesture_id = -1
