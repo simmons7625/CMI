@@ -7,7 +7,7 @@ data:
   use_enhanced_features: true
   val_split: 0.2
   num_samples: null  # Maximum number of samples to process (null for all)
-  chunk_size: 50  # Maximum length for chunking sequences during training
+  chunk_size: 20  # Maximum length for chunking sequences during training
 
 # Model configuration
 model:
@@ -16,15 +16,15 @@ model:
   hidden_dim: 512  # Reduced feature dimension after feature selection (null defaults to d_model)
   num_heads: 8
   num_layers: 3  # Number of transformer/GRU layers
-  dropout: 0.1  # Dropout rate for transformer/GRU
+  dropout: 0.2  # Dropout rate for transformer/GRU
   sequence_processor: "gru"  # "transformer" or "gru" - choose sequence processing method
   tof_backbone: "b0"  # "b0" or "b3" - choose EfficientNet backbone for TOF branch
 
 # Training configuration
 training:
   batch_size: 16
-  num_epochs: 50
-  learning_rate: 0.00005
+  num_epochs: 30
+  learning_rate: 0.0001
   weight_decay: 0.001
   random_seed: 42
   num_workers: 2
@@ -35,7 +35,7 @@ training:
   # Loss function configuration
   loss:
     type: "focal_loss"  # "cross_entropy" or "focal_loss"
-    gamma: 2.0  # Focal loss gamma parameter (higher = more focus on hard examples)
+    gamma: 1.0  # Focal loss gamma parameter (higher = more focus on hard examples)
     reduction: "mean"  # "mean", "sum", or "none"
     label_smoothing: 0.1  # Label smoothing factor (0.0 = no smoothing, 0.1 = 10% smoothing)
 

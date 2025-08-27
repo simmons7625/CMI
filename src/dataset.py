@@ -56,7 +56,9 @@ class CMIDataset(Dataset):
         chunks = []
 
         for sequence in tqdm(
-            self.sequences, desc="Creating chunks", unit="seq"
+            self.sequences,
+            desc="Creating chunks",
+            unit="seq",
         ):
             label = sequence.get("label", -1)
             sequence_id = sequence["sequence_id"]
@@ -300,7 +302,9 @@ class SequenceProcessor:
         # Add progress bar for sequence processing
         grouped_list = list(grouped) if not isinstance(grouped, list) else grouped
         for seq_id, group in tqdm(
-            grouped_list, desc="Processing sequences", unit="seq"
+            grouped_list,
+            desc="Processing sequences",
+            unit="seq",
         ):
             try:
                 if "gesture_id" not in group.columns:
