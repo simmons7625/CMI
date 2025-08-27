@@ -10,39 +10,183 @@ from .feature_processor import FeatureProcessor
 
 
 class CMIDataset(Dataset):
-    """Dataset class for CMI gesture recognition data."""
+    """Dataset class for CMI gesture recognition data with chunking and augmentation support."""
 
     def __init__(
         self,
         sequences: list[dict],
-        max_length: int | None = None,
+        chunk_size: int = 100,
+        use_chunking: bool = True,
+        augmentation_config: dict | None = None,
     ):
         """Initialize CMI dataset.
 
         Args:
             sequences: List of sequence dictionaries containing data and labels
-            max_length: Maximum sequence length for padding/truncation
-            use_enhanced_features: Whether to use enhanced feature processing
+            chunk_size: Size of chunks to create from sequences
+            use_chunking: Whether to split sequences into chunks
+            augmentation_config: Configuration for data augmentation
         """
         self.sequences = sequences
+        self.chunk_size = chunk_size
+        self.use_chunking = use_chunking
+        self.augmentation_config = augmentation_config or {}
 
-        # Calculate max length if not provided
-        if max_length is None:
-            self.max_length = max(
-                len(seq["enhanced_data"]["tof"])
-                if "enhanced_data" in seq
-                else len(seq["data"])
-                for seq in sequences
+        # Create chunks if chunking is enabled
+        if self.use_chunking:
+            self.chunks = self._create_chunks()
+            print(
+                f"📦 Created {len(self.chunks)} chunks from {len(sequences)} sequences (chunk_size={chunk_size})"
             )
         else:
-            self.max_length = max_length
+            # Calculate max_length for padding
+            sequence_lengths = []
+            for seq in sequences:
+                if "enhanced_data" in seq:
+                    seq_len = len(seq["enhanced_data"]["tof"])
+                else:
+                    seq_len = len(seq["data"])
+                sequence_lengths.append(seq_len)
+
+            self.max_length = max(sequence_lengths) if sequence_lengths else 100
+            print(
+                f"📏 Auto-calculated max_length: {self.max_length} (from {len(sequence_lengths)} sequences)"
+            )
 
     def __len__(self) -> int:
-        return len(self.sequences)
+        return len(self.chunks) if self.use_chunking else len(self.sequences)
+
+    def _create_chunks(self) -> list[dict]:
+        """Create chunks from sequences for chunk-wise training."""
+        chunks = []
+
+        for sequence in self.sequences:
+            label = sequence.get("label", -1)
+            sequence_id = sequence["sequence_id"]
+
+            if "enhanced_data" in sequence:
+                # Use enhanced features
+                tof_data = sequence["enhanced_data"]["tof"]
+                acc_data = sequence["enhanced_data"]["acc"]
+                rot_data = sequence["enhanced_data"]["rot"]
+                thm_data = sequence["enhanced_data"]["thm"]
+            else:
+                # Use original features
+                data = sequence["data"]
+                tof_data = data[:, :320]  # ToF features (320)
+                acc_data = data[:, 320:323]  # Accelerometer (3)
+                rot_data = data[:, 323:327]  # Rotation (4)
+                thm_data = data[:, 327:332]  # Thermal (5)
+
+            # Create overlapping chunks
+            seq_len = len(tof_data)
+            if seq_len <= self.chunk_size:
+                # If sequence is shorter than chunk_size, use as single chunk
+                chunks.append(
+                    {
+                        "sequence_id": sequence_id,
+                        "tof": tof_data,
+                        "acc": acc_data,
+                        "rot": rot_data,
+                        "thm": thm_data,
+                        "label": label,
+                        "chunk_idx": 0,
+                        "total_chunks": 1,
+                    }
+                )
+            else:
+                # Create overlapping chunks with 50% overlap
+                step = self.chunk_size // 2
+                chunk_idx = 0
+                for start in range(0, seq_len - self.chunk_size + 1, step):
+                    end = start + self.chunk_size
+                    chunks.append(
+                        {
+                            "sequence_id": sequence_id,
+                            "tof": tof_data[start:end],
+                            "acc": acc_data[start:end],
+                            "rot": rot_data[start:end],
+                            "thm": thm_data[start:end],
+                            "label": label,
+                            "chunk_idx": chunk_idx,
+                            "total_chunks": (seq_len - self.chunk_size) // step + 1,
+                        }
+                    )
+                    chunk_idx += 1
+
+        return chunks
+
+    def _apply_augmentation(
+        self,
+        tof_data: np.ndarray,
+        acc_data: np.ndarray,
+        rot_data: np.ndarray,
+        thm_data: np.ndarray,
+    ) -> tuple:
+        """Apply Gaussian noise augmentation to sensor data.
+
+        Gaussian noise with mu = source_value, sigma = hyperparameter
+        """
+        if not self.augmentation_config.get("enabled", False):
+            return tof_data, acc_data, rot_data, thm_data
+
+        # Gaussian noise augmentation
+        if self.augmentation_config.get("gaussian_noise", {}).get("enabled", False):
+            noise_sigma = self.augmentation_config["gaussian_noise"].get("sigma", 0.01)
+            noise_prob = self.augmentation_config["gaussian_noise"].get("prob", 0.5)
+
+            # Apply noise to each modality with specified probability
+            if np.random.rand() < noise_prob:
+                # mu = source_value, sigma = hyperparameter
+                tof_noise = np.random.normal(loc=tof_data, scale=noise_sigma)
+                tof_data = tof_noise
+
+            if np.random.rand() < noise_prob:
+                acc_noise = np.random.normal(loc=acc_data, scale=noise_sigma)
+                acc_data = acc_noise
+
+            if np.random.rand() < noise_prob:
+                rot_noise = np.random.normal(loc=rot_data, scale=noise_sigma)
+                rot_data = rot_noise
+
+            if np.random.rand() < noise_prob:
+                thm_noise = np.random.normal(loc=thm_data, scale=noise_sigma)
+                thm_data = thm_noise
+
+        return tof_data, acc_data, rot_data, thm_data
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        if self.use_chunking:
+            # Return chunk
+            chunk = self.chunks[idx]
+
+            tof_data = chunk["tof"]
+            acc_data = chunk["acc"]
+            rot_data = chunk["rot"]
+            thm_data = chunk["thm"]
+
+            # Apply augmentation
+            tof_data, acc_data, rot_data, thm_data = self._apply_augmentation(
+                tof_data,
+                acc_data,
+                rot_data,
+                thm_data,
+            )
+
+            return {
+                "sequence_id": chunk["sequence_id"],
+                "tof": torch.FloatTensor(tof_data),
+                "acc": torch.FloatTensor(acc_data),
+                "rot": torch.FloatTensor(rot_data),
+                "thm": torch.FloatTensor(thm_data),
+                "label": torch.LongTensor([chunk["label"]])[0],
+                "chunk_idx": chunk["chunk_idx"],
+                "total_chunks": chunk["total_chunks"],
+            }
+        # Return full sequence (legacy mode)
         sequence = self.sequences[idx]
-        label = sequence.get("label", -1)  # Default to -1 if label is missing
+        label = sequence.get("label", -1)
+        chunk_size = sequence.get("chunk_size", 100)
 
         if "enhanced_data" in sequence:
             # Use enhanced features
@@ -53,30 +197,32 @@ class CMIDataset(Dataset):
         else:
             # Use original features
             data = sequence["data"]
-
-            # Pad or truncate sequence
-            seq_len = len(data)
-            if seq_len < self.max_length:
-                # Pad with zeros
-                padding = np.zeros((self.max_length - seq_len, data.shape[1]))
-                data = np.vstack([data, padding])
-            elif seq_len > self.max_length:
-                # Truncate
-                data = data[: self.max_length]
-
-            # Split into sensor modalities
             tof_data = data[:, :320]  # ToF features (320)
             acc_data = data[:, 320:323]  # Accelerometer (3)
             rot_data = data[:, 323:327]  # Rotation (4)
             thm_data = data[:, 327:332]  # Thermal (5)
 
+        # Apply augmentation
+        tof_data, acc_data, rot_data, thm_data = self._apply_augmentation(
+            tof_data,
+            acc_data,
+            rot_data,
+            thm_data,
+        )
+
+        # Pad sequences to max_length for standard batching
         seq_len = len(tof_data)
         if seq_len < self.max_length:
-            # Pad enhanced features
-            tof_padding = np.zeros((self.max_length - seq_len, tof_data.shape[1]))
-            acc_padding = np.zeros((self.max_length - seq_len, acc_data.shape[1]))
-            rot_padding = np.zeros((self.max_length - seq_len, rot_data.shape[1]))
-            thm_padding = np.zeros((self.max_length - seq_len, thm_data.shape[1]))
+            # Pad with -1.0 (consistent with missing data convention)
+            pad_shape_tof = (self.max_length - seq_len, tof_data.shape[1])
+            pad_shape_acc = (self.max_length - seq_len, acc_data.shape[1])
+            pad_shape_rot = (self.max_length - seq_len, rot_data.shape[1])
+            pad_shape_thm = (self.max_length - seq_len, thm_data.shape[1])
+
+            tof_padding = np.full(pad_shape_tof, -1.0)
+            acc_padding = np.full(pad_shape_acc, -1.0)
+            rot_padding = np.full(pad_shape_rot, -1.0)
+            thm_padding = np.full(pad_shape_thm, -1.0)
 
             tof_data = np.vstack([tof_data, tof_padding])
             acc_data = np.vstack([acc_data, acc_padding])
@@ -88,18 +234,17 @@ class CMIDataset(Dataset):
             acc_data = acc_data[: self.max_length]
             rot_data = rot_data[: self.max_length]
             thm_data = thm_data[: self.max_length]
-
-        # Get chunk start index for positional encoding
-        chunk_start_idx = sequence.get("chunk_start_idx", 0)
+            seq_len = self.max_length
 
         return {
             "sequence_id": sequence["sequence_id"],
-            "tof": torch.FloatTensor(tof_data),  # (seq_len, 320)
-            "acc": torch.FloatTensor(acc_data),  # (seq_len, 3)
-            "rot": torch.FloatTensor(rot_data),  # (seq_len, 4)
-            "thm": torch.FloatTensor(thm_data),  # (seq_len, 5)
-            "label": torch.LongTensor([label])[0],  # scalar
-            "chunk_start_idx": torch.LongTensor([chunk_start_idx])[0],  # scalar
+            "tof": torch.FloatTensor(tof_data),
+            "acc": torch.FloatTensor(acc_data),
+            "rot": torch.FloatTensor(rot_data),
+            "thm": torch.FloatTensor(thm_data),
+            "label": torch.LongTensor([label])[0],
+            "chunk_size": chunk_size,
+            "actual_length": seq_len,
         }
 
 
@@ -119,17 +264,17 @@ class SequenceProcessor:
         self,
         df: pl.DataFrame,
         num_samples: int | None = None,
-        max_seq_length: int | None = None,
+        chunk_size: int | None = None,
     ) -> list[dict]:
         """Process polars dataframe into sequences.
 
         Args:
             df: Training dataframe with gesture sequences
             num_samples: Maximum number of samples to process (None for all)
-            max_seq_length: Maximum sequence length for chunking (None for no chunking)
+            chunk_size: Chunk size for model internal chunking (not used for dataset chunking)
 
         Returns:
-            List of sequence dictionaries
+            List of sequence dictionaries (full sequences, not chunked)
         """
         sequences = []
 
@@ -152,23 +297,16 @@ class SequenceProcessor:
                     group,
                 )
 
-                # Apply chunking if max_seq_length is specified
-                if max_seq_length is not None:
-                    chunked_sequences = self._chunk_sequence(
-                        enhanced_features,
-                        gesture_id,
-                        seq_id[0],
-                        max_seq_length,
-                    )
-                    sequences.extend(chunked_sequences)
-                else:
-                    sequences.append(
-                        {
-                            "sequence_id": seq_id[0],
-                            "enhanced_data": enhanced_features,
-                            "label": gesture_id,
-                        },
-                    )
+                # Store full sequence (no dataset-level chunking)
+                sequences.append(
+                    {
+                        "sequence_id": seq_id[0],
+                        "enhanced_data": enhanced_features,
+                        "label": gesture_id,
+                        "chunk_size": chunk_size
+                        or 100,  # Store chunk size for model use
+                    },
+                )
 
             except Exception as e:
                 print(f"Error processing sequence {seq_id[0]}: {e}")
@@ -177,115 +315,18 @@ class SequenceProcessor:
                     self.acc_cols + self.rot_cols + self.thm_cols + self.tof_cols,
                 ).to_numpy()
 
-                # Apply chunking to fallback data if max_seq_length is specified
-                if max_seq_length is not None:
-                    chunked_sequences = self._chunk_original_sequence(
-                        seq_data,
-                        gesture_id,
-                        seq_id[0],
-                        max_seq_length,
-                    )
-                    sequences.extend(chunked_sequences)
-                else:
-                    sequences.append(
-                        {
-                            "sequence_id": seq_id[0],
-                            "data": seq_data,
-                            "label": gesture_id,
-                        },
-                    )
+                # Store full sequence (no dataset-level chunking)
+                sequences.append(
+                    {
+                        "sequence_id": seq_id[0],
+                        "data": seq_data,
+                        "label": gesture_id,
+                        "chunk_size": chunk_size
+                        or 100,  # Store chunk size for model use
+                    },
+                )
 
         return sequences
-
-    def _chunk_sequence(
-        self,
-        enhanced_features: dict,
-        gesture_id: int,
-        sequence_id: str,
-        max_seq_length: int,
-    ) -> list[dict]:
-        """Chunk enhanced features into smaller sequences."""
-        tof_data = enhanced_features["tof"]
-        acc_data = enhanced_features["acc"]
-        rot_data = enhanced_features["rot"]
-        thm_data = enhanced_features["thm"]
-
-        seq_length = len(tof_data)
-        chunks = []
-
-        if seq_length <= max_seq_length:
-            # No chunking needed
-            chunks.append(
-                {
-                    "sequence_id": sequence_id,
-                    "enhanced_data": enhanced_features,
-                    "label": gesture_id,
-                    "chunk_start_idx": 0,
-                },
-            )
-        else:
-            # Split into chunks
-            num_chunks = (seq_length + max_seq_length - 1) // max_seq_length
-            for i in range(num_chunks):
-                start_idx = i * max_seq_length
-                end_idx = min((i + 1) * max_seq_length, seq_length)
-
-                chunk_features = {
-                    "tof": tof_data[start_idx:end_idx],
-                    "acc": acc_data[start_idx:end_idx],
-                    "rot": rot_data[start_idx:end_idx],
-                    "thm": thm_data[start_idx:end_idx],
-                }
-
-                chunks.append(
-                    {
-                        "sequence_id": f"{sequence_id}",
-                        "enhanced_data": chunk_features,
-                        "label": gesture_id,
-                        "chunk_start_idx": start_idx,
-                    },
-                )
-
-        return chunks
-
-    def _chunk_original_sequence(
-        self,
-        seq_data: np.ndarray,
-        gesture_id: int,
-        sequence_id: str,
-        max_seq_length: int,
-    ) -> list[dict]:
-        """Chunk original sequence data into smaller sequences."""
-        seq_length = len(seq_data)
-        chunks = []
-
-        if seq_length <= max_seq_length:
-            # No chunking needed
-            chunks.append(
-                {
-                    "sequence_id": sequence_id,
-                    "data": seq_data,
-                    "label": gesture_id,
-                    "chunk_start_idx": 0,
-                },
-            )
-        else:
-            # Split into chunks
-            num_chunks = (seq_length + max_seq_length - 1) // max_seq_length
-            for i in range(num_chunks):
-                start_idx = i * max_seq_length
-                end_idx = min((i + 1) * max_seq_length, seq_length)
-
-                chunks.append(
-                    {
-                        "sequence_id": f"{sequence_id}",
-                        "data": seq_data[start_idx:end_idx],
-                        "label": gesture_id,
-                        "chunk_start_idx": start_idx,
-                    },
-                )
-
-        return chunks
 
     def create_train_val_split(
         self,
@@ -413,8 +454,55 @@ def prepare_gesture_labels(df: pl.DataFrame) -> tuple:
     return df, label_encoder, target_gestures, non_target_gestures
 
 
+def get_dataset_stats(sequences: list[dict]) -> dict:
+    """Get dataset statistics including feature dimensions and sequence lengths.
+
+    Args:
+        sequences: List of sequences with enhanced features
+
+    Returns:
+        Dictionary containing feature dimensions and sequence length statistics
+    """
+    if not sequences:
+        return {
+            "feature_dims": {"tof": 320, "acc": 3, "rot": 4, "thm": 5},
+            "max_length": 100,
+            "min_length": 1,
+            "avg_length": 50,
+        }
+
+    # Get feature dimensions
+    if "enhanced_data" in sequences[0]:
+        sample_features = sequences[0]["enhanced_data"]
+        feature_dims = {
+            "tof": sample_features["tof"].shape[1],
+            "acc": sample_features["acc"].shape[1],
+            "rot": sample_features["rot"].shape[1],
+            "thm": sample_features["thm"].shape[1],
+        }
+    else:
+        feature_dims = {"tof": 320, "acc": 3, "rot": 4, "thm": 5}
+
+    # Calculate sequence length statistics
+    sequence_lengths = []
+    for seq in sequences:
+        if "enhanced_data" in seq:
+            seq_len = len(seq["enhanced_data"]["tof"])
+        else:
+            seq_len = len(seq["data"])
+        sequence_lengths.append(seq_len)
+
+    return {
+        "feature_dims": feature_dims,
+        "max_length": max(sequence_lengths),
+        "min_length": min(sequence_lengths),
+        "avg_length": sum(sequence_lengths) / len(sequence_lengths),
+        "total_sequences": len(sequences),
+    }
+
+
 def get_enhanced_feature_dims(sequences: list[dict]) -> dict[str, int]:
-    """Get feature dimensions from enhanced sequences.
+    """Get feature dimensions from enhanced sequences (backward compatibility).
 
     Args:
         sequences: List of sequences with enhanced features
@@ -422,19 +510,5 @@ def get_enhanced_feature_dims(sequences: list[dict]) -> dict[str, int]:
     Returns:
         Dictionary of feature dimensions
     """
-    if not sequences or "enhanced_data" not in sequences[0]:
-        # Default dimensions for original features
-        return {
-            "tof": 320,
-            "acc": 3,
-            "rot": 4,
-            "thm": 5,
-        }
-
-    sample_features = sequences[0]["enhanced_data"]
-    return {
-        "tof": sample_features["tof"].shape[1],
-        "acc": sample_features["acc"].shape[1],
-        "rot": sample_features["rot"].shape[1],
-        "thm": sample_features["thm"].shape[1],
-    }
+    stats = get_dataset_stats(sequences)
+    return stats["feature_dims"]

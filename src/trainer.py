@@ -7,6 +7,7 @@ import torch
 from torch import nn, optim
 from tqdm import tqdm
 
+from .focal_loss import FocalLoss, calculate_class_weights, create_focal_loss
 from .model import create_model
 
 try:
@@ -28,6 +29,7 @@ class CMITrainer:
         device: str = "auto",
         use_wandb: bool = False,
         wandb_config: dict | None = None,
+        train_sequences: list[dict] | None = None,
     ):
         """Initialize trainer.
 
@@ -37,6 +39,7 @@ class CMITrainer:
             device: Device to use ('auto', 'cuda', 'cpu')
             use_wandb: Whether to use wandb for logging
             wandb_config: wandb configuration dictionary
+            train_sequences: Training sequences for focal loss class weighting
         """
         # Set device
         if device == "auto":
@@ -63,8 +66,40 @@ class CMITrainer:
         # Initialize model
         self.model = create_model(**model_config).to(self.device)
 
-        # Initialize training components
-        self.criterion = nn.CrossEntropyLoss()
+        # Initialize loss function
+        loss_config = training_config.get("loss", {})
+        label_smoothing = loss_config.get("label_smoothing", 0.0)
+
+        if loss_config.get("type", "cross_entropy") == "focal_loss":
+            if train_sequences is not None:
+                class_counts = calculate_class_weights(
+                    train_sequences, model_config["num_classes"]
+                )
+                self.criterion = create_focal_loss(
+                    num_classes=model_config["num_classes"],
+                    class_counts=class_counts,
+                    gamma=loss_config.get("gamma", 2.0),
+                    reduction=loss_config.get("reduction", "mean"),
+                    label_smoothing=label_smoothing,
+                ).to(self.device)
+                print(f"🎯 Using Focal Loss with gamma={loss_config.get('gamma', 2.0)}")
+            else:
+                self.criterion = FocalLoss(
+                    gamma=loss_config.get("gamma", 2.0),
+                    reduction=loss_config.get("reduction", "mean"),
+                    label_smoothing=label_smoothing,
+                ).to(self.device)
+                print(
+                    f"🎯 Using Focal Loss without class weighting (gamma={loss_config.get('gamma', 2.0)})"
+                )
+        else:
+            self.criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+            print("📊 Using Cross Entropy Loss")
+
+        if label_smoothing > 0.0:
+            print(f"✨ Label smoothing enabled: {label_smoothing}")
+
+        # Initialize optimizer and scheduler
         self.optimizer = optim.AdamW(
             self.model.parameters(),
             lr=training_config.get("learning_rate", 1e-3),
@@ -88,10 +123,10 @@ class CMITrainer:
         self.val_accuracies = []
 
     def train_epoch(self, train_loader: DataLoader) -> tuple[float, float]:
-        """Train for one epoch.
+        """Train for one epoch with chunked data from dataset.
 
         Args:
-            train_loader: Training data loader
+            train_loader: Training data loader with chunks
 
         Returns:
             Tuple of (average_loss, accuracy)
@@ -104,22 +139,17 @@ class CMITrainer:
         train_pbar = tqdm(train_loader, desc=f"Epoch {self.current_epoch+1} [Train]")
 
         for batch in train_pbar:
-            tof_data = batch["tof"].to(self.device)  # (batch_size, seq_len, 320)
-            acc_data = batch["acc"].to(self.device)  # (batch_size, seq_len, 3)
-            rot_data = batch["rot"].to(self.device)  # (batch_size, seq_len, 4)
-            thm_data = batch["thm"].to(self.device)  # (batch_size, seq_len, 5)
+            tof_data = batch["tof"].to(self.device)  # (batch_size, chunk_len, 320)
+            acc_data = batch["acc"].to(self.device)  # (batch_size, chunk_len, acc_dim)
+            rot_data = batch["rot"].to(self.device)  # (batch_size, chunk_len, rot_dim)
+            thm_data = batch["thm"].to(self.device)  # (batch_size, chunk_len, thm_dim)
             labels = batch["label"].to(self.device)  # (batch_size,)
-            chunk_start_idx = batch.get("chunk_start_idx")
-            if chunk_start_idx is not None:
-                chunk_start_idx = chunk_start_idx.to(self.device)
 
             self.optimizer.zero_grad()
+
+            # Simple forward pass through model
             outputs = self.model(
-                tof_data,
-                acc_data,
-                rot_data,
-                thm_data,
-                chunk_start_idx,
+                tof_data, acc_data, rot_data, thm_data
             )  # (batch_size, num_classes)
             loss = self.criterion(outputs, labels)
 
@@ -149,8 +179,8 @@ class CMITrainer:
                 },
             )
 
-        avg_loss = train_loss / len(train_loader)
-        accuracy = 100.0 * train_correct / train_total
+        avg_loss = train_loss / len(train_loader) if len(train_loader) > 0 else 0.0
+        accuracy = 100.0 * train_correct / train_total if train_total > 0 else 0.0
 
         # Log training metrics to wandb
         if self.use_wandb:
@@ -166,10 +196,10 @@ class CMITrainer:
         return avg_loss, accuracy
 
     def validate_epoch(self, val_loader: DataLoader) -> tuple[float, float]:
-        """Validate for one epoch.
+        """Validate for one epoch with chunked data from dataset.
 
         Args:
-            val_loader: Validation data loader
+            val_loader: Validation data loader with chunks
 
         Returns:
             Tuple of (average_loss, accuracy)
@@ -183,21 +213,21 @@ class CMITrainer:
             val_pbar = tqdm(val_loader, desc=f"Epoch {self.current_epoch+1} [Val]")
 
             for batch in val_pbar:
-                tof_data = batch["tof"].to(self.device)  # (batch_size, seq_len, 320)
-                acc_data = batch["acc"].to(self.device)  # (batch_size, seq_len, 3)
-                rot_data = batch["rot"].to(self.device)  # (batch_size, seq_len, 4)
-                thm_data = batch["thm"].to(self.device)  # (batch_size, seq_len, 5)
+                tof_data = batch["tof"].to(self.device)  # (batch_size, chunk_len, 320)
+                acc_data = batch["acc"].to(
+                    self.device
+                )  # (batch_size, chunk_len, acc_dim)
+                rot_data = batch["rot"].to(
+                    self.device
+                )  # (batch_size, chunk_len, rot_dim)
+                thm_data = batch["thm"].to(
+                    self.device
+                )  # (batch_size, chunk_len, thm_dim)
                 labels = batch["label"].to(self.device)  # (batch_size,)
-                chunk_start_idx = batch.get("chunk_start_idx")
-                if chunk_start_idx is not None:
-                    chunk_start_idx = chunk_start_idx.to(self.device)
 
+                # Simple forward pass through model
                 outputs = self.model(
-                    tof_data,
-                    acc_data,
-                    rot_data,
-                    thm_data,
-                    chunk_start_idx,
+                    tof_data, acc_data, rot_data, thm_data
                 )  # (batch_size, num_classes)
                 loss = self.criterion(outputs, labels)
 
@@ -216,8 +246,8 @@ class CMITrainer:
                     },
                 )
 
-        avg_loss = val_loss / len(val_loader)
-        accuracy = 100.0 * val_correct / val_total
+        avg_loss = val_loss / len(val_loader) if len(val_loader) > 0 else 0.0
+        accuracy = 100.0 * val_correct / val_total if val_total > 0 else 0.0
 
         # Log validation metrics to wandb
         if self.use_wandb:

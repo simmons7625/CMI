@@ -678,7 +678,7 @@ class OtherSensorsBranch(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
-    def forward(self, x, chunk_start_idx=None):
+    def forward(self, x):
         # x shape: (batch_size, seq_len, input_dim)
         batch_size, seq_len, input_dim = x.size()
 
@@ -938,68 +938,6 @@ class FeatureSelectionGRU(nn.Module):
         return x.transpose(1, 2)  # (batch_size, seq_len, d_reduced)
 
 
-class ChunkAttentionAggregator(nn.Module):
-    """Attention-based aggregation for multiple chunks with positional encoding."""
-
-    def __init__(self, d_reduced, max_chunks=100, dropout=0.1):
-        super().__init__()
-        self.d_reduced = d_reduced
-
-        # Positional encoding for chunk positions
-        self.pos_encoding = nn.Parameter(torch.randn(max_chunks, d_reduced) * 0.02)
-
-        # Attention network
-        self.attention = nn.Sequential(
-            nn.Linear(d_reduced, d_reduced // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(d_reduced // 2, 1),
-        )
-        self._init_weights()
-
-    def _init_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-        # Initialize positional encoding
-        nn.init.normal_(self.pos_encoding, mean=0, std=0.02)
-
-    def forward(self, chunk_embeddings, chunk_indices=None):
-        """Forward pass with positional encoding.
-
-        Args:
-            chunk_embeddings: (num_chunks, d_reduced)
-            chunk_indices: (num_chunks,) - optional chunk position indices
-        """
-        num_chunks = chunk_embeddings.size(0)
-
-        # Add positional encoding
-        if chunk_indices is not None:
-            # Use specific chunk indices for positional encoding
-            pos_encodings = self.pos_encoding[chunk_indices]  # (num_chunks, d_reduced)
-        else:
-            # Use sequential positions 0, 1, 2, ...
-            pos_encodings = self.pos_encoding[:num_chunks]  # (num_chunks, d_reduced)
-
-        # Add positional encoding to chunk embeddings
-        chunk_embeddings_with_pos = chunk_embeddings + pos_encodings
-
-        # Compute attention weights
-        attention_scores = self.attention(chunk_embeddings_with_pos)  # (num_chunks, 1)
-        attention_weights = F.softmax(attention_scores, dim=0)  # (num_chunks, 1)
-
-        # Weighted aggregation
-        weighted_embedding = (attention_weights * chunk_embeddings_with_pos).sum(
-            dim=0,
-        )  # (d_reduced,)
-
-        return weighted_embedding, attention_weights.squeeze(
-            -1,
-        )  # (d_reduced,), (num_chunks,)
-
-
 class GestureBranchedModel(nn.Module):
     def __init__(
         self,
@@ -1083,12 +1021,6 @@ class GestureBranchedModel(nn.Module):
 
         # Final classifier
         self.classifier = nn.Linear(self.d_reduced, num_classes)
-
-        # Chunk attention aggregator for inference
-        self.chunk_aggregator = ChunkAttentionAggregator(
-            self.d_reduced,
-            dropout=dropout,
-        )
         self._init_weights()
 
     def _init_weights(self):
@@ -1107,52 +1039,7 @@ class GestureBranchedModel(nn.Module):
         acc_features,
         rot_features,
         thm_features,
-        chunk_start_idx=None,
     ):
-        # Process sensor branches
-        tof_out = self.tof_branch(tof_features)  # (batch_size, d_model, seq_len)
-        acc_out = self.acc_branch(acc_features)  # (batch_size, d_model, seq_len)
-        rot_out = self.rot_branch(rot_features)  # (batch_size, d_model, seq_len)
-        thm_out = self.thm_branch(thm_features)  # (batch_size, d_model, seq_len)
-
-        # Concatenate features
-        fused = torch.cat(
-            (tof_out, acc_out, rot_out, thm_out),
-            dim=1,
-        )  # (batch_size, 4*d_model, seq_len)
-
-        # Apply normalization
-        fused = self.fusion_norm(fused)
-
-        # Transpose for processor
-        fused = fused.transpose(1, 2)
-
-        # Apply processor with feature selection
-        transformed = self.feature_processor(
-            fused,
-            chunk_start_idx,
-        )  # (batch_size, seq_len, d_reduced)
-
-        # Global pooling
-        pooled = self.global_pool(transformed.transpose(1, 2)).squeeze(
-            -1,
-        )  # (batch_size, d_reduced)
-
-        # Extract embeddings
-        embeddings = self.embedding_extractor(pooled)  # (batch_size, d_reduced)
-
-        # Classification
-        return self.classifier(embeddings)  # (batch_size, num_classes)
-
-    def get_embeddings(
-        self,
-        tof_features,
-        acc_features,
-        rot_features,
-        thm_features,
-        chunk_start_idx=None,
-    ):
-        """Get embeddings without final classification (for chunk aggregation)."""
         # Process sensor branches
         tof_out = self.tof_branch(tof_features)  # (batch_size, d_model, seq_len)
         acc_out = self.acc_branch(acc_features)  # (batch_size, d_model, seq_len)
@@ -1174,7 +1061,7 @@ class GestureBranchedModel(nn.Module):
         # Apply processor with feature selection
         transformed = self.feature_processor(
             fused,
-            chunk_start_idx,
+            chunk_start_idx=None,
         )  # (batch_size, seq_len, d_reduced)
 
         # Global pooling
@@ -1182,60 +1069,11 @@ class GestureBranchedModel(nn.Module):
             -1,
         )  # (batch_size, d_reduced)
 
-        # Extract embeddings (without final classification)
-        return self.embedding_extractor(pooled)  # (batch_size, d_reduced)
+        # Extract embeddings
+        embeddings = self.embedding_extractor(pooled)  # (batch_size, d_reduced)
 
-    def predict_with_chunks(
-        self,
-        chunk_data_list,
-    ):
-        """Predict with attention-based chunk aggregation.
-
-        Args:
-            chunk_data_list: List of chunk data dictionaries with keys:
-                            ['tof', 'acc', 'rot', 'thm', 'chunk_start_idx']
-
-        Returns:
-            Tuple of (logits, attention_weights)
-        """
-        chunk_embeddings = []
-        chunk_indices = []
-
-        for i, chunk_data in enumerate(chunk_data_list):
-            # Get embeddings for each chunk
-            embedding = self.get_embeddings(
-                chunk_data["tof"].unsqueeze(0),  # Add batch dimension
-                chunk_data["acc"].unsqueeze(0),
-                chunk_data["rot"].unsqueeze(0),
-                chunk_data["thm"].unsqueeze(0),
-                chunk_data.get("chunk_start_idx", None),
-            ).squeeze(0)  # Remove batch dimension
-            chunk_embeddings.append(embedding)
-
-            # Use sequential chunk index (0, 1, 2, ...)
-            # Could also use chunk_start_idx for absolute positioning
-            chunk_indices.append(i)
-
-        # Stack chunk embeddings and indices
-        chunk_embeddings = torch.stack(
-            chunk_embeddings,
-            dim=0,
-        )  # (num_chunks, d_reduced)
-        chunk_indices = torch.tensor(
-            chunk_indices,
-            device=chunk_embeddings.device,
-        )  # (num_chunks,)
-
-        # Apply attention aggregation with positional encoding
-        weighted_embedding, attention_weights = self.chunk_aggregator(
-            chunk_embeddings,
-            chunk_indices,
-        )
-
-        # Final classification
-        logits = self.classifier(weighted_embedding)  # (num_classes,)
-
-        return logits, attention_weights
+        # Classification
+        return self.classifier(embeddings)  # (batch_size, num_classes)
 
 
 def create_model(
@@ -1267,6 +1105,7 @@ def create_model(
         max_seq_length (int): Maximum sequence length for positional encoding (default: 5000)
         sequence_processor (str): Sequence processor type, "transformer" or "gru" (default: "transformer")
         tof_backbone (str): TOF backbone architecture, "b0" or "b3" (default: "b0")
+        chunk_size (int): Default chunk size for training (default: 100)
 
     Returns:
         GestureBranchedModel: Initialized model

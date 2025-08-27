@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from src.dataset import (
     CMIDataset,
     SequenceProcessor,
-    get_enhanced_feature_dims,
+    get_dataset_stats,
     prepare_gesture_labels,
 )
 from src.evaluator import CMIEvaluator
@@ -75,11 +75,19 @@ def load_and_process_data(config: dict):
     sequences = processor.process_dataframe(
         train_df,
         num_samples=num_samples,
-        max_seq_length=chunk_length,
+        chunk_size=chunk_length,
     )
 
-    # Get feature dimensions
-    feature_dims = get_enhanced_feature_dims(sequences)
+    # Get dataset statistics
+    dataset_stats = get_dataset_stats(sequences)
+    feature_dims = dataset_stats["feature_dims"]
+
+    print("\n📊 Dataset Statistics:")
+    print(f"  Total sequences: {dataset_stats['total_sequences']}")
+    print(
+        f"  Sequence lengths: min={dataset_stats['min_length']}, max={dataset_stats['max_length']}, avg={dataset_stats['avg_length']:.1f}"
+    )
+    print(f"  Feature dimensions: {feature_dims}")
 
     # Create train/val split
     train_sequences, val_sequences = processor.create_train_val_split(
@@ -95,8 +103,9 @@ def load_and_process_data(config: dict):
         "train_sequences": train_sequences,
         "val_sequences": val_sequences,
         "label_encoder": label_encoder,
-        "max_seq_length": chunk_length,  # Return the chunk length used for training
+        "chunk_size": chunk_length,
         "feature_dims": feature_dims,
+        "dataset_stats": dataset_stats,
         "target_gestures": target_gestures,
         "non_target_gestures": non_target_gestures,
     }
@@ -106,18 +115,26 @@ def create_data_loaders(data_info: dict, config: dict):
     """Create training and validation data loaders."""
     print("Creating data loaders...")
 
-    # Create datasets
+    # Get augmentation config
+    augmentation_config = config.get("augmentation", {})
+
+    # Create datasets with chunk-wise training and augmentation
+    print("\n🏗️  Creating datasets...")
     train_dataset = CMIDataset(
         data_info["train_sequences"],
-        max_length=data_info["max_seq_length"],
+        chunk_size=data_info["chunk_size"],
+        use_chunking=True,
+        augmentation_config=augmentation_config,  # Pass augmentation config to training dataset
     )
 
     val_dataset = CMIDataset(
         data_info["val_sequences"],
-        max_length=data_info["max_seq_length"],
+        chunk_size=data_info["chunk_size"],
+        use_chunking=True,
+        augmentation_config=None,  # No augmentation for validation
     )
 
-    # Create data loaders
+    # Create standard data loaders
     train_loader = DataLoader(
         train_dataset,
         batch_size=config["training"]["batch_size"],
@@ -199,6 +216,10 @@ def main():
             gradient_clip_norm=config["training"]["gradient_clip_norm"],
         )
 
+        # Add loss configuration
+        loss_config = config["training"].get("loss", {})
+        trainer_config["loss"] = loss_config
+
         # Create trainer with wandb config
         use_wandb = config.get("logging", {}).get("use_wandb", False)
         wandb_config = config.get("logging", {}).get("wandb", {})
@@ -208,6 +229,9 @@ def main():
             device="auto",
             use_wandb=use_wandb,
             wandb_config=wandb_config,
+            train_sequences=data_info[
+                "train_sequences"
+            ],  # For focal loss class weighting
         )
 
         # Print model info
@@ -295,7 +319,8 @@ def main():
             additional_data={
                 "config": config,
                 "feature_dims": data_info["feature_dims"],
-                "max_seq_length": data_info["max_seq_length"],
+                "chunk_size": data_info["chunk_size"],
+                "dataset_stats": data_info["dataset_stats"],
                 "training_history": training_history,
                 "target_gestures": data_info["target_gestures"],
                 "non_target_gestures": data_info["non_target_gestures"],

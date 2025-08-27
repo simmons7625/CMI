@@ -7,7 +7,7 @@ data:
   use_enhanced_features: true
   val_split: 0.2
   num_samples: null  # Maximum number of samples to process (null for all)
-  chunk_size: 20  # Maximum length for chunking sequences during training
+  chunk_size: 50  # Maximum length for chunking sequences during training
 
 # Model configuration
 model:
@@ -23,8 +23,8 @@ model:
 # Training configuration
 training:
   batch_size: 16
-  num_epochs: 30
-  learning_rate: 0.0001
+  num_epochs: 50
+  learning_rate: 0.00005
   weight_decay: 0.001
   random_seed: 42
   num_workers: 2
@@ -32,10 +32,25 @@ training:
   # Gradient clipping to prevent exploding gradients
   gradient_clip_norm: 1.0
 
+  # Loss function configuration
+  loss:
+    type: "focal_loss"  # "cross_entropy" or "focal_loss"
+    gamma: 2.0  # Focal loss gamma parameter (higher = more focus on hard examples)
+    reduction: "mean"  # "mean", "sum", or "none"
+    label_smoothing: 0.1  # Label smoothing factor (0.0 = no smoothing, 0.1 = 10% smoothing)
+
   # Scheduler configuration
   scheduler:
     patience: 5
     decay_factor: 0.5
+
+# Data augmentation configuration
+augmentation:
+  enabled: true  # Enable/disable all augmentations
+  gaussian_noise:
+    enabled: true  # Enable Gaussian noise augmentation
+    sigma: 0.01    # Standard deviation for Gaussian noise (mu = source_value)
+    prob: 0.5      # Probability of applying noise to each modality
 
 # Output configuration
 output:
