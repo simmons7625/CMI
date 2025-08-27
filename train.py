@@ -49,7 +49,6 @@ def load_config(config_path: str) -> dict:
 
 def load_and_process_data(config: dict):
     """Load and process training data."""
-
     # Load data
     train_df = pl.read_csv(config["data"]["train_path"])
     train_df = train_df.fill_null(-1.0).fill_nan(-1.0)
@@ -163,7 +162,7 @@ def main():
         model_config = create_model_config(
             num_classes=config["model"]["num_classes"],
             d_model=config["model"]["d_model"],
-            d_reduced=config["model"]["d_reduced"],
+            hidden_dim=config["model"]["hidden_dim"],
             num_heads=config["model"]["num_heads"],
             num_layers=config["model"].get("num_layers", 1),
             acc_dim=data_info["feature_dims"]["acc"],
@@ -205,7 +204,6 @@ def main():
             ],  # For focal loss class weighting
         )
 
-
         # Save configurations
         config_dir = Path(exp_dir) / "configs"
         config_dir.mkdir(exist_ok=True)
@@ -233,7 +231,10 @@ def main():
 
         # Load best model for evaluation
         trainer.load_checkpoint(str(model_save_path), load_optimizer=False)
-        evaluator = CMIEvaluator(trainer.model, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+        evaluator = CMIEvaluator(
+            trainer.model,
+            device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        )
 
         results = evaluator.evaluate(val_loader, data_info["label_encoder"])
 

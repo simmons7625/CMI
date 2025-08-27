@@ -5,7 +5,7 @@
 Our current gesture recognition model uses:
 - **Multi-branch architecture**: ToF (EfficientNet B3), Accelerometer, Rotation, Thermal branches
 - **Sequence processing**: Transformer (5 layers) with feature selection after temporal processing
-- **Feature fusion**: Concatenation (4×d_model → d_reduced) with attention-based selection
+- **Feature fusion**: Concatenation (4×d_model → hidden_dim) with attention-based selection
 - **Input**: 320 ToF + 3 ACC + 4 ROT + 5 THM features
 
 ## Research Findings: State-of-the-Art Improvements (2024-2025)
@@ -100,7 +100,7 @@ Our current gesture recognition model uses:
    class MultiScaleFeatureSelection:
        def __init__(self, d_model, scales=[1, 2, 4]):
            self.scale_attentions = nn.ModuleList([
-               FeatureSelectionAttention(d_model, d_reduced // len(scales))
+               FeatureSelectionAttention(d_model, hidden_dim // len(scales))
                for _ in scales
            ])
    ```

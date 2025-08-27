@@ -282,7 +282,6 @@ class CMITrainer:
         Returns:
             Dictionary with training history and final metrics
         """
-
         # Create save directory
         os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
@@ -308,7 +307,6 @@ class CMITrainer:
             if val_acc > self.best_val_acc:
                 self.best_val_acc = val_acc
                 self.save_checkpoint(model_save_path, epoch, val_acc)
-
 
         return {
             "train_losses": self.train_losses,
@@ -426,7 +424,7 @@ def create_trainer_config(
 def create_model_config(
     num_classes: int = 18,
     d_model: int = 128,
-    d_reduced: int = 128,
+    hidden_dim: int = 128,
     num_heads: int = 8,
     num_layers: int = 1,
     acc_dim: int = 4,
@@ -442,7 +440,7 @@ def create_model_config(
     Args:
         num_classes: Number of gesture classes
         d_model: Model dimension
-        d_reduced: Reduced feature dimension after feature selection
+        hidden_dim: Reduced feature dimension after feature selection
         num_heads: Number of attention heads
         num_layers: Number of transformer layers
         acc_dim: Accelerometer feature dimension
@@ -459,7 +457,7 @@ def create_model_config(
     return {
         "num_classes": num_classes,
         "d_model": d_model,
-        "d_reduced": d_reduced,
+        "hidden_dim": hidden_dim,
         "num_heads": num_heads,
         "num_layers": num_layers,
         "acc_dim": acc_dim,

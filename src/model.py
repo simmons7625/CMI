@@ -748,13 +748,13 @@ class TransformerEncoderLayer(nn.Module):
 class FeatureSelectionAttention(nn.Module):
     """Feature selection using multi-head attention to reduce dimensionality."""
 
-    def __init__(self, d_model, d_reduced, num_heads=4, dropout=0.1):
+    def __init__(self, d_model, hidden_dim, num_heads=4, dropout=0.1):
         super().__init__()
         self.d_model = d_model
-        self.d_reduced = d_reduced
+        self.hidden_dim = hidden_dim
 
         # Learnable query tokens for feature selection
-        self.query_tokens = nn.Parameter(torch.randn(1, d_reduced, d_model))
+        self.query_tokens = nn.Parameter(torch.randn(1, hidden_dim, d_model))
 
         # Multi-head attention for feature selection
         self.feature_attention = nn.MultiheadAttention(
@@ -769,7 +769,7 @@ class FeatureSelectionAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
         # Projection to reduced dimension
-        self.projection = nn.Linear(d_model, d_reduced)
+        self.projection = nn.Linear(d_model, hidden_dim)
 
         self._init_weights()
 
@@ -793,7 +793,7 @@ class FeatureSelectionAttention(nn.Module):
             batch_size,
             -1,
             -1,
-        )  # (batch_size, d_reduced, d_model)
+        )  # (batch_size, hidden_dim, d_model)
 
         # Attention-based feature selection
         selected_features, _ = self.feature_attention(
@@ -807,7 +807,7 @@ class FeatureSelectionAttention(nn.Module):
         selected_features = self.dropout(selected_features)
         selected_features = self.projection(
             selected_features,
-        )  # (batch_size, d_reduced, d_reduced)
+        )  # (batch_size, hidden_dim, hidden_dim)
 
         # Transpose output
         return selected_features.transpose(1, 2)
@@ -819,7 +819,7 @@ class FeatureSelectionTransformer(nn.Module):
     def __init__(
         self,
         d_model,
-        d_reduced,
+        hidden_dim,
         num_heads,
         num_layers=1,
         d_ff=None,
@@ -828,12 +828,12 @@ class FeatureSelectionTransformer(nn.Module):
     ):
         super().__init__()
         self.d_model = d_model
-        self.d_reduced = d_reduced
+        self.hidden_dim = hidden_dim
 
         # Feature selection step
         self.feature_selector = FeatureSelectionAttention(
             d_model,
-            d_reduced,
+            hidden_dim,
             num_heads=num_heads // 2,
             dropout=dropout,
         )
@@ -863,8 +863,8 @@ class FeatureSelectionTransformer(nn.Module):
             x = layer(x)
 
         # Feature selection after sequence processing
-        x = self.feature_selector(x)  # (batch_size, d_reduced, seq_len)
-        return x.transpose(1, 2)  # (batch_size, seq_len, d_reduced)
+        x = self.feature_selector(x)  # (batch_size, hidden_dim, seq_len)
+        return x.transpose(1, 2)  # (batch_size, seq_len, hidden_dim)
 
 
 class FeatureSelectionGRU(nn.Module):
@@ -873,20 +873,20 @@ class FeatureSelectionGRU(nn.Module):
     def __init__(
         self,
         d_model,
-        d_reduced,
+        hidden_dim,
         num_layers=1,
         dropout=0.1,
         bidirectional=True,
     ):
         super().__init__()
         self.d_model = d_model
-        self.d_reduced = d_reduced
+        self.hidden_dim = hidden_dim
         self.bidirectional = bidirectional
 
         # Feature selection layer
         self.feature_selector = FeatureSelectionAttention(
             d_model,
-            d_reduced,
+            hidden_dim,
             num_heads=4,
             dropout=dropout,
         )
@@ -934,8 +934,8 @@ class FeatureSelectionGRU(nn.Module):
         gru_out = self.norm(gru_out)
 
         # Feature selection after sequence processing
-        x = self.feature_selector(gru_out)  # (batch_size, d_reduced, seq_len)
-        return x.transpose(1, 2)  # (batch_size, seq_len, d_reduced)
+        x = self.feature_selector(gru_out)  # (batch_size, hidden_dim, seq_len)
+        return x.transpose(1, 2)  # (batch_size, seq_len, hidden_dim)
 
 
 class GestureBranchedModel(nn.Module):
@@ -943,7 +943,7 @@ class GestureBranchedModel(nn.Module):
         self,
         num_classes=18,
         d_model=128,
-        d_reduced=None,
+        hidden_dim=None,
         num_heads=8,
         num_layers=1,
         acc_dim=4,
@@ -956,7 +956,7 @@ class GestureBranchedModel(nn.Module):
     ):
         super().__init__()
         self.d_model = d_model
-        self.d_reduced = d_reduced if d_reduced is not None else d_model
+        self.hidden_dim = hidden_dim if hidden_dim is not None else d_model
         # Feature branches with configurable feature dimensions
         if tof_backbone.lower() == "b3":
             self.tof_branch = TOFBranchB3(d_model=d_model)
@@ -984,11 +984,11 @@ class GestureBranchedModel(nn.Module):
         # Feature fusion by concatenation (4 branches)
         self.fusion_norm = nn.BatchNorm1d(d_model * 4)
 
-        # Feature Selection Processor: d_model*4 -> d_reduced -> transformer/gru
+        # Feature Selection Processor: d_model*4 -> hidden_dim -> transformer/gru
         if sequence_processor.lower() == "gru":
             self.feature_processor = FeatureSelectionGRU(
                 d_model * 4,  # Input: concatenated features from all 4 branches
-                self.d_reduced,  # Output: reduced to d_reduced dimension
+                self.hidden_dim,  # Output: reduced to hidden_dim dimension
                 num_layers=num_layers,
                 dropout=dropout,
                 bidirectional=True,
@@ -996,7 +996,7 @@ class GestureBranchedModel(nn.Module):
         elif sequence_processor.lower() == "transformer":
             self.feature_processor = FeatureSelectionTransformer(
                 d_model * 4,  # Input: concatenated features from all 4 branches
-                self.d_reduced,  # Output: reduced to d_reduced dimension
+                self.hidden_dim,  # Output: reduced to hidden_dim dimension
                 num_heads,
                 num_layers,
                 dropout=dropout,
@@ -1011,16 +1011,16 @@ class GestureBranchedModel(nn.Module):
 
         # Embedding extraction (before final classification)
         self.embedding_extractor = nn.Sequential(
-            nn.Linear(self.d_reduced, self.d_reduced * 2),
+            nn.Linear(self.hidden_dim, self.hidden_dim * 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(self.d_reduced * 2, self.d_reduced),
+            nn.Linear(self.hidden_dim * 2, self.hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
         )
 
         # Final classifier
-        self.classifier = nn.Linear(self.d_reduced, num_classes)
+        self.classifier = nn.Linear(self.hidden_dim, num_classes)
         self._init_weights()
 
     def _init_weights(self):
@@ -1062,15 +1062,15 @@ class GestureBranchedModel(nn.Module):
         transformed = self.feature_processor(
             fused,
             chunk_start_idx=None,
-        )  # (batch_size, seq_len, d_reduced)
+        )  # (batch_size, seq_len, hidden_dim)
 
         # Global pooling
         pooled = self.global_pool(transformed.transpose(1, 2)).squeeze(
             -1,
-        )  # (batch_size, d_reduced)
+        )  # (batch_size, hidden_dim)
 
         # Extract embeddings
-        embeddings = self.embedding_extractor(pooled)  # (batch_size, d_reduced)
+        embeddings = self.embedding_extractor(pooled)  # (batch_size, hidden_dim)
 
         # Classification
         return self.classifier(embeddings)  # (batch_size, num_classes)
@@ -1079,7 +1079,7 @@ class GestureBranchedModel(nn.Module):
 def create_model(
     num_classes=18,
     d_model=128,
-    d_reduced=128,
+    hidden_dim=128,
     num_heads=8,
     num_layers=1,
     acc_dim=4,
@@ -1095,7 +1095,7 @@ def create_model(
     Args:
         num_classes (int): Number of gesture classes (default: 18)
         d_model (int): Model dimension (default: 128)
-        d_reduced (int): Reduced feature dimension after feature selection (default: d_model)
+        hidden_dim (int): Reduced feature dimension after feature selection (default: d_model)
         num_heads (int): Number of attention heads (default: 8)
         num_layers (int): Number of transformer/GRU layers (default: 1)
         acc_dim (int): Accelerometer feature dimension (default: 4)
@@ -1113,7 +1113,7 @@ def create_model(
     return GestureBranchedModel(
         num_classes=num_classes,
         d_model=d_model,
-        d_reduced=d_reduced,
+        hidden_dim=hidden_dim,
         num_heads=num_heads,
         num_layers=num_layers,
         acc_dim=acc_dim,
