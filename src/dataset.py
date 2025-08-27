@@ -51,6 +51,25 @@ class CMIDataset(Dataset):
     def __len__(self) -> int:
         return len(self.chunks) if self.use_chunking else len(self.sequences)
 
+    def _has_excessive_padding(
+        self,
+        chunk_data: np.ndarray,
+        threshold: float = 0.5,
+    ) -> bool:
+        """Check if chunk has excessive padding (-1.0 values).
+
+        Args:
+            chunk_data: Chunk data array
+            threshold: Maximum allowed ratio of padding values
+
+        Returns:
+            True if padding ratio exceeds threshold
+        """
+        total_elements = chunk_data.size
+        padding_elements = np.sum(chunk_data == -1.0)
+        padding_ratio = padding_elements / total_elements
+        return padding_ratio > threshold
+
     def _create_chunks(self) -> list[dict]:
         """Create chunks from sequences for chunk-wise training."""
         chunks = []
@@ -97,18 +116,24 @@ class CMIDataset(Dataset):
                     [thm_data, np.full((pad_len, thm_data.shape[1]), -1.0)],
                 )
 
-                chunks.append(
-                    {
-                        "sequence_id": sequence_id,
-                        "tof": tof_padded,
-                        "acc": acc_padded,
-                        "rot": rot_padded,
-                        "thm": thm_padded,
-                        "label": label,
-                        "chunk_idx": 0,
-                        "total_chunks": 1,
-                    },
+                # Check if the padded chunk has excessive padding using all modalities
+                combined_chunk = np.concatenate(
+                    [tof_padded, acc_padded, rot_padded, thm_padded],
+                    axis=1,
                 )
+                if not self._has_excessive_padding(combined_chunk):
+                    chunks.append(
+                        {
+                            "sequence_id": sequence_id,
+                            "tof": tof_padded,
+                            "acc": acc_padded,
+                            "rot": rot_padded,
+                            "thm": thm_padded,
+                            "label": label,
+                            "chunk_idx": 0,
+                            "total_chunks": 1,
+                        },
+                    )
             else:
                 # Create overlapping chunks with 50% overlap
                 step = self.chunk_size // 2
@@ -116,18 +141,31 @@ class CMIDataset(Dataset):
                     range(0, seq_len - self.chunk_size + 1, step),
                 ):
                     end = start + self.chunk_size
-                    chunks.append(
-                        {
-                            "sequence_id": sequence_id,
-                            "tof": tof_data[start:end],
-                            "acc": acc_data[start:end],
-                            "rot": rot_data[start:end],
-                            "thm": thm_data[start:end],
-                            "label": label,
-                            "chunk_idx": chunk_idx,
-                            "total_chunks": (seq_len - self.chunk_size) // step + 1,
-                        },
+
+                    # Extract chunk data
+                    tof_chunk = tof_data[start:end]
+                    acc_chunk = acc_data[start:end]
+                    rot_chunk = rot_data[start:end]
+                    thm_chunk = thm_data[start:end]
+
+                    # Check if chunk has excessive padding
+                    combined_chunk = np.concatenate(
+                        [tof_chunk, acc_chunk, rot_chunk, thm_chunk],
+                        axis=1,
                     )
+                    if not self._has_excessive_padding(combined_chunk):
+                        chunks.append(
+                            {
+                                "sequence_id": sequence_id,
+                                "tof": tof_chunk,
+                                "acc": acc_chunk,
+                                "rot": rot_chunk,
+                                "thm": thm_chunk,
+                                "label": label,
+                                "chunk_idx": chunk_idx,
+                                "total_chunks": (seq_len - self.chunk_size) // step + 1,
+                            },
+                        )
 
         return chunks
 

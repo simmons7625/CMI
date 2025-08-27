@@ -7,7 +7,7 @@ data:
   use_enhanced_features: true
   val_split: 0.2
   num_samples: null  # Maximum number of samples to process (null for all)
-  chunk_size: 20  # Maximum length for chunking sequences during training
+  chunk_size: 30  # Maximum length for chunking sequences during training
 
 # Model configuration
 model:
