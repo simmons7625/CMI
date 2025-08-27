@@ -73,7 +73,8 @@ class CMITrainer:
         if loss_config.get("type", "cross_entropy") == "focal_loss":
             if train_sequences is not None:
                 class_counts = calculate_class_weights(
-                    train_sequences, model_config["num_classes"]
+                    train_sequences,
+                    model_config["num_classes"],
                 )
                 self.criterion = create_focal_loss(
                     num_classes=model_config["num_classes"],
@@ -90,7 +91,7 @@ class CMITrainer:
                     label_smoothing=label_smoothing,
                 ).to(self.device)
                 print(
-                    f"🎯 Using Focal Loss without class weighting (gamma={loss_config.get('gamma', 2.0)})"
+                    f"🎯 Using Focal Loss without class weighting (gamma={loss_config.get('gamma', 2.0)})",
                 )
         else:
             self.criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
@@ -149,7 +150,10 @@ class CMITrainer:
 
             # Simple forward pass through model
             outputs = self.model(
-                tof_data, acc_data, rot_data, thm_data
+                tof_data,
+                acc_data,
+                rot_data,
+                thm_data,
             )  # (batch_size, num_classes)
             loss = self.criterion(outputs, labels)
 
@@ -215,19 +219,22 @@ class CMITrainer:
             for batch in val_pbar:
                 tof_data = batch["tof"].to(self.device)  # (batch_size, chunk_len, 320)
                 acc_data = batch["acc"].to(
-                    self.device
+                    self.device,
                 )  # (batch_size, chunk_len, acc_dim)
                 rot_data = batch["rot"].to(
-                    self.device
+                    self.device,
                 )  # (batch_size, chunk_len, rot_dim)
                 thm_data = batch["thm"].to(
-                    self.device
+                    self.device,
                 )  # (batch_size, chunk_len, thm_dim)
                 labels = batch["label"].to(self.device)  # (batch_size,)
 
                 # Simple forward pass through model
                 outputs = self.model(
-                    tof_data, acc_data, rot_data, thm_data
+                    tof_data,
+                    acc_data,
+                    rot_data,
+                    thm_data,
                 )  # (batch_size, num_classes)
                 loss = self.criterion(outputs, labels)
 

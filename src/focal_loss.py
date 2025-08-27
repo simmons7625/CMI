@@ -67,13 +67,19 @@ class FocalLoss(nn.Module):
             # Use the original hard targets to get p_t
             pt = torch.exp(
                 -F.cross_entropy(
-                    inputs, targets, reduction="none", ignore_index=self.ignore_index
-                )
+                    inputs,
+                    targets,
+                    reduction="none",
+                    ignore_index=self.ignore_index,
+                ),
             )
         else:
             # Standard cross entropy without smoothing
             ce_loss = F.cross_entropy(
-                inputs, targets, reduction="none", ignore_index=self.ignore_index
+                inputs,
+                targets,
+                reduction="none",
+                ignore_index=self.ignore_index,
             )
             pt = torch.exp(-ce_loss)
 
@@ -138,7 +144,10 @@ def create_focal_loss(
         print(f"🎯 Focal Loss with label smoothing: {label_smoothing}")
 
     return FocalLoss(
-        alpha=alpha, gamma=gamma, reduction=reduction, label_smoothing=label_smoothing
+        alpha=alpha,
+        gamma=gamma,
+        reduction=reduction,
+        label_smoothing=label_smoothing,
     )
 
 

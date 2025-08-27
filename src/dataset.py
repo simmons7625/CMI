@@ -36,7 +36,7 @@ class CMIDataset(Dataset):
         if self.use_chunking:
             self.chunks = self._create_chunks()
             print(
-                f"📦 Created {len(self.chunks)} chunks from {len(sequences)} sequences (chunk_size={chunk_size})"
+                f"📦 Created {len(self.chunks)} chunks from {len(sequences)} sequences (chunk_size={chunk_size})",
             )
         else:
             # Calculate max_length for padding
@@ -50,7 +50,7 @@ class CMIDataset(Dataset):
 
             self.max_length = max(sequence_lengths) if sequence_lengths else 100
             print(
-                f"📏 Auto-calculated max_length: {self.max_length} (from {len(sequence_lengths)} sequences)"
+                f"📏 Auto-calculated max_length: {self.max_length} (from {len(sequence_lengths)} sequences)",
             )
 
     def __len__(self) -> int:
@@ -92,7 +92,7 @@ class CMIDataset(Dataset):
                         "label": label,
                         "chunk_idx": 0,
                         "total_chunks": 1,
-                    }
+                    },
                 )
             else:
                 # Create overlapping chunks with 50% overlap
@@ -110,7 +110,7 @@ class CMIDataset(Dataset):
                             "label": label,
                             "chunk_idx": chunk_idx,
                             "total_chunks": (seq_len - self.chunk_size) // step + 1,
-                        }
+                        },
                     )
                     chunk_idx += 1
 

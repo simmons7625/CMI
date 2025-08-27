@@ -85,7 +85,7 @@ def load_and_process_data(config: dict):
     print("\n📊 Dataset Statistics:")
     print(f"  Total sequences: {dataset_stats['total_sequences']}")
     print(
-        f"  Sequence lengths: min={dataset_stats['min_length']}, max={dataset_stats['max_length']}, avg={dataset_stats['avg_length']:.1f}"
+        f"  Sequence lengths: min={dataset_stats['min_length']}, max={dataset_stats['max_length']}, avg={dataset_stats['avg_length']:.1f}",
     )
     print(f"  Feature dimensions: {feature_dims}")
 
