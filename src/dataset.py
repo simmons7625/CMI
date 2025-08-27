@@ -77,13 +77,21 @@ class CMIDataset(Dataset):
             if seq_len <= self.chunk_size:
                 # If sequence is shorter than chunk_size, pad to chunk_size
                 pad_len = self.chunk_size - seq_len
-                
+
                 # Pad each modality with -1.0 (consistent with missing data convention)
-                tof_padded = np.vstack([tof_data, np.full((pad_len, tof_data.shape[1]), -1.0)])
-                acc_padded = np.vstack([acc_data, np.full((pad_len, acc_data.shape[1]), -1.0)])
-                rot_padded = np.vstack([rot_data, np.full((pad_len, rot_data.shape[1]), -1.0)])
-                thm_padded = np.vstack([thm_data, np.full((pad_len, thm_data.shape[1]), -1.0)])
-                
+                tof_padded = np.vstack(
+                    [tof_data, np.full((pad_len, tof_data.shape[1]), -1.0)],
+                )
+                acc_padded = np.vstack(
+                    [acc_data, np.full((pad_len, acc_data.shape[1]), -1.0)],
+                )
+                rot_padded = np.vstack(
+                    [rot_data, np.full((pad_len, rot_data.shape[1]), -1.0)],
+                )
+                thm_padded = np.vstack(
+                    [thm_data, np.full((pad_len, thm_data.shape[1]), -1.0)],
+                )
+
                 chunks.append(
                     {
                         "sequence_id": sequence_id,
@@ -99,8 +107,9 @@ class CMIDataset(Dataset):
             else:
                 # Create overlapping chunks with 50% overlap
                 step = self.chunk_size // 2
-                chunk_idx = 0
-                for start in range(0, seq_len - self.chunk_size + 1, step):
+                for chunk_idx, start in enumerate(
+                    range(0, seq_len - self.chunk_size + 1, step)
+                ):
                     end = start + self.chunk_size
                     chunks.append(
                         {
@@ -114,7 +123,6 @@ class CMIDataset(Dataset):
                             "total_chunks": (seq_len - self.chunk_size) // step + 1,
                         },
                     )
-                    chunk_idx += 1
 
         return chunks
 
@@ -139,7 +147,6 @@ class CMIDataset(Dataset):
 
             # Apply noise to each modality with specified probability
             if np.random.rand() < noise_prob:
-                # mu = source_value, sigma = hyperparameter
                 tof_noise = np.random.normal(loc=tof_data, scale=noise_sigma)
                 tof_data = tof_noise
 
@@ -353,10 +360,11 @@ def stratified_split_equal_ratio(
     test_size: float = 0.2,
     random_state: int = 42,
 ) -> tuple[list[dict], list[dict]]:
-    """Create stratified train/validation split with equal split ratios per label.
+    """Create stratified train/validation split with equal split ratios per label based on chunks.
 
-    This function ensures that each label is split with exactly the same ratio,
-    avoiding the imbalanced splits that can occur with sklearn's train_test_split.
+    This function creates a temporary dataset to calculate chunks per sequence,
+    then splits sequences ensuring that each label maintains the same ratio
+    of total chunks in train/val splits.
 
     Args:
         sequences: List of processed sequences
@@ -368,37 +376,92 @@ def stratified_split_equal_ratio(
     """
     np.random.seed(random_state)
 
-    # Group sequences by label
-    label_groups = {}
+    # Calculate chunks per sequence to understand the chunk distribution
+    chunk_info = []
     for i, seq in enumerate(sequences):
         label = seq["label"]
+        chunk_size = seq.get("chunk_size", 100)
+
+        # Determine sequence length
+        if "enhanced_data" in seq:
+            seq_len = len(seq["enhanced_data"]["tof"])
+        else:
+            seq_len = len(seq["data"])
+
+        # Calculate number of chunks this sequence will produce
+        if seq_len <= chunk_size:
+            num_chunks = 1
+        else:
+            step = chunk_size // 2
+            num_chunks = (seq_len - chunk_size) // step + 1
+
+        chunk_info.append(
+            {
+                "seq_idx": i,
+                "label": label,
+                "num_chunks": num_chunks,
+            },
+        )
+
+    # Group by label and calculate total chunks per label
+    label_groups = {}
+    label_chunk_counts = {}
+
+    for info in chunk_info:
+        label = info["label"]
         if label not in label_groups:
             label_groups[label] = []
-        label_groups[label].append(i)
+            label_chunk_counts[label] = 0
+        label_groups[label].append(info)
+        label_chunk_counts[label] += info["num_chunks"]
 
     train_indices = []
     val_indices = []
 
-    # Split each label group with the exact same ratio
-    for label, indices in label_groups.items():
-        # Shuffle indices for this label
-        shuffled_indices = np.array(indices)
-        np.random.shuffle(shuffled_indices)
+    # Split each label group to maintain chunk ratio
+    for label, group in label_groups.items():
+        total_chunks = label_chunk_counts[label]
+        target_val_chunks = int(np.round(total_chunks * test_size))
 
-        # Calculate split point
-        n_samples = len(shuffled_indices)
-        n_val = int(np.round(n_samples * test_size))
-        n_train = n_samples - n_val
+        # Sort sequences by number of chunks (descending) for better distribution
+        group_sorted = sorted(group, key=lambda x: x["num_chunks"], reverse=True)
 
-        # Ensure we have at least one sample in each split if possible
-        if n_samples >= 2:
-            n_val = max(1, n_val)
-            n_train = n_samples - n_val
+        # Shuffle to randomize selection among sequences with same chunk count
+        np.random.shuffle(group_sorted)
 
-        # Split indices
-        val_indices.extend(shuffled_indices[:n_val].tolist())
-        train_indices.extend(shuffled_indices[n_val:].tolist())
+        # Greedily select sequences for validation to get close to target chunk count
+        val_chunks = 0
+        val_seq_indices = []
+        train_seq_indices = []
 
+        for info in group_sorted:
+            if (
+                val_chunks + info["num_chunks"] <= target_val_chunks
+                or len(val_seq_indices) == 0
+            ):
+                val_seq_indices.append(info["seq_idx"])
+                val_chunks += info["num_chunks"]
+            else:
+                train_seq_indices.append(info["seq_idx"])
+
+        # If we didn't reach the target and there are remaining sequences,
+        # add sequences until we exceed the target or run out
+        remaining_indices = [
+            info["seq_idx"]
+            for info in group_sorted
+            if info["seq_idx"] not in val_seq_indices + train_seq_indices
+        ]
+
+        for seq_idx in remaining_indices:
+            info = next(info for info in group_sorted if info["seq_idx"] == seq_idx)
+            if val_chunks < target_val_chunks:
+                val_seq_indices.append(seq_idx)
+                val_chunks += info["num_chunks"]
+            else:
+                train_seq_indices.append(seq_idx)
+
+        train_indices.extend(train_seq_indices)
+        val_indices.extend(val_seq_indices)
 
     # Create train and validation sequences
     train_sequences = [sequences[i] for i in train_indices]
