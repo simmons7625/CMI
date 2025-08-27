@@ -5,6 +5,7 @@ import polars as pl
 import torch
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 from .feature_processor import FeatureProcessor
 
@@ -54,7 +55,9 @@ class CMIDataset(Dataset):
         """Create chunks from sequences for chunk-wise training."""
         chunks = []
 
-        for sequence in self.sequences:
+        for sequence in tqdm(
+            self.sequences, desc="Creating chunks", unit="seq"
+        ):
             label = sequence.get("label", -1)
             sequence_id = sequence["sequence_id"]
 
@@ -108,7 +111,7 @@ class CMIDataset(Dataset):
                 # Create overlapping chunks with 50% overlap
                 step = self.chunk_size // 2
                 for chunk_idx, start in enumerate(
-                    range(0, seq_len - self.chunk_size + 1, step)
+                    range(0, seq_len - self.chunk_size + 1, step),
                 ):
                     end = start + self.chunk_size
                     chunks.append(
@@ -294,7 +297,11 @@ class SequenceProcessor:
         if num_samples is not None:
             grouped = list(grouped)[:num_samples]
 
-        for seq_id, group in grouped:
+        # Add progress bar for sequence processing
+        grouped_list = list(grouped) if not isinstance(grouped, list) else grouped
+        for seq_id, group in tqdm(
+            grouped_list, desc="Processing sequences", unit="seq"
+        ):
             try:
                 if "gesture_id" not in group.columns:
                     gesture_id = -1

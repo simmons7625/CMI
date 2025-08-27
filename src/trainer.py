@@ -66,6 +66,10 @@ class CMITrainer:
         # Initialize model
         self.model = create_model(**model_config).to(self.device)
 
+        # Apply torch.compile for performance optimization if available
+        self.is_compiled = False
+        self._compile_model()
+
         # Initialize loss function
         loss_config = training_config.get("loss", {})
         label_smoothing = loss_config.get("label_smoothing", 0.0)
@@ -353,6 +357,17 @@ class CMITrainer:
 
         torch.save(checkpoint, path)
 
+    def _compile_model(self):
+        """Compile model with torch.compile if available."""
+        if hasattr(torch, "compile"):
+            try:
+                self.model = torch.compile(self.model)
+                self.is_compiled = True
+            except Exception:
+                self.is_compiled = False
+        else:
+            self.is_compiled = False
+
     def load_checkpoint(self, path: str, load_optimizer: bool = True) -> dict:
         """Load model checkpoint.
 
@@ -365,7 +380,16 @@ class CMITrainer:
         """
         checkpoint = torch.load(path, map_location=self.device)
 
-        self.model.load_state_dict(checkpoint["model_state_dict"])
+        # Load state dict into the underlying model if compiled
+        if self.is_compiled and hasattr(self.model, "_orig_mod"):
+            # Access to the original model under torch.compile
+            getattr(self.model, "_orig_mod").load_state_dict(checkpoint["model_state_dict"])  # noqa: SLF001
+        else:
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+
+        # Recompile model after loading checkpoint if it was originally compiled
+        if self.is_compiled:
+            self._compile_model()
 
         if load_optimizer:
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
