@@ -43,14 +43,12 @@ def load_config(config_path: str) -> dict:
         msg = f"Config file not found: {config_path}"
         raise FileNotFoundError(msg)
 
-    print(f"✅ Loading configuration from: {config_path}")
     with open(config_path) as f:
         return yaml.safe_load(f)
 
 
 def load_and_process_data(config: dict):
     """Load and process training data."""
-    print("Loading training data...")
 
     # Load data
     train_df = pl.read_csv(config["data"]["train_path"])
@@ -60,10 +58,6 @@ def load_and_process_data(config: dict):
     train_df, label_encoder, target_gestures, non_target_gestures = (
         prepare_gesture_labels(train_df)
     )
-
-    print("\nGesture ID mapping:")
-    for i, gesture in enumerate(label_encoder.classes_):
-        print(f"  {i}: {gesture}")
 
     # Process sequences
     processor = SequenceProcessor()
@@ -82,22 +76,12 @@ def load_and_process_data(config: dict):
     dataset_stats = get_dataset_stats(sequences)
     feature_dims = dataset_stats["feature_dims"]
 
-    print("\n📊 Dataset Statistics:")
-    print(f"  Total sequences: {dataset_stats['total_sequences']}")
-    print(
-        f"  Sequence lengths: min={dataset_stats['min_length']}, max={dataset_stats['max_length']}, avg={dataset_stats['avg_length']:.1f}",
-    )
-    print(f"  Feature dimensions: {feature_dims}")
-
     # Create train/val split
     train_sequences, val_sequences = processor.create_train_val_split(
         sequences,
         test_size=config["data"]["val_split"],
         random_state=config["training"]["random_seed"],
     )
-
-    print(f"Training sequences: {len(train_sequences)}")
-    print(f"Validation sequences: {len(val_sequences)}")
 
     return {
         "train_sequences": train_sequences,
@@ -113,13 +97,8 @@ def load_and_process_data(config: dict):
 
 def create_data_loaders(data_info: dict, config: dict):
     """Create training and validation data loaders."""
-    print("Creating data loaders...")
-
     # Get augmentation config
     augmentation_config = config.get("augmentation", {})
-
-    # Create datasets with chunk-wise training and augmentation
-    print("\n🏗️  Creating datasets...")
     train_dataset = CMIDataset(
         data_info["train_sequences"],
         chunk_size=data_info["chunk_size"],
@@ -149,9 +128,6 @@ def create_data_loaders(data_info: dict, config: dict):
         num_workers=config["training"]["num_workers"],
     )
 
-    print(f"Train batches: {len(train_loader)}")
-    print(f"Validation batches: {len(val_loader)}")
-
     return train_loader, val_loader
 
 
@@ -170,14 +146,9 @@ def main():
     # Set seed for reproducibility
     set_seed(config["training"]["random_seed"])
 
-    # Check GPU availability
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-
     # Create experiment directory
     exp_name = config.get("experiment_name", "cmi_training")
     exp_dir = create_experiment_dir(base_dir="experiments", experiment_name=exp_name)
-    print(f"Experiment directory: {exp_dir}")
 
     try:
         start_time = time.time()
@@ -234,9 +205,6 @@ def main():
             ],  # For focal loss class weighting
         )
 
-        # Print model info
-        param_info = trainer.count_parameters()
-        print(f"Model parameters: {param_info['trainable_parameters']:,}")
 
         # Save configurations
         config_dir = Path(exp_dir) / "configs"
@@ -252,9 +220,6 @@ def main():
             json.dump(trainer_config, f, indent=2)
 
         # Train model
-        print(f"{'='*60}")
-        print("🚀 Starting training...")
-        print(f"{'='*60}")
 
         model_save_path = Path(exp_dir) / "models" / "best_model.pt"
         model_save_path.parent.mkdir(exist_ok=True)
@@ -268,23 +233,9 @@ def main():
 
         # Load best model for evaluation
         trainer.load_checkpoint(str(model_save_path), load_optimizer=False)
-        evaluator = CMIEvaluator(trainer.model, device=device)
-
-        # Evaluate model
-        print(f"{'='*60}")
-        print("📊 Evaluating model...")
-        print(f"{'='*60}")
+        evaluator = CMIEvaluator(trainer.model, device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
         results = evaluator.evaluate(val_loader, data_info["label_encoder"])
-
-        # Print results
-        print("\n🎯 Final Results:")
-        print(f"  Accuracy: {results['accuracy']:.4f} ({results['accuracy']*100:.2f}%)")
-        print(f"  Macro F1: {results['macro_f1']:.4f}")
-        print(f"  Weighted F1: {results['weighted_f1']:.4f}")
-
-        # Print classification report
-        evaluator.print_classification_report(val_loader, data_info["label_encoder"])
 
         # Save visualizations
         plots_dir = Path(exp_dir) / "plots"
@@ -295,7 +246,6 @@ def main():
             training_history,
             save_path=plots_dir / "training_curves.png",
         )
-        print(f"📈 Training curves saved to: {plots_dir / 'training_curves.png'}")
 
         # Confusion matrix
         evaluator.plot_confusion_matrix(
@@ -303,7 +253,6 @@ def main():
             data_info["label_encoder"],
             save_path=plots_dir / "confusion_matrix.png",
         )
-        print(f"🔥 Confusion matrix saved to: {plots_dir / 'confusion_matrix.png'}")
 
         # Save results
         results_file = Path(exp_dir) / "results.json"
@@ -326,22 +275,6 @@ def main():
                 "non_target_gestures": data_info["non_target_gestures"],
             },
         )
-
-        # Final summary
-        training_time = time.time() - start_time
-        final_accuracy = results["accuracy"] * 100
-
-        print(f"\n{'='*60}")
-        print("🎉 TRAINING COMPLETED SUCCESSFULLY!")
-        print(f"{'='*60}")
-        print(
-            f"⏱️  Training time: {training_time:.1f} seconds ({training_time/60:.1f} minutes)",
-        )
-        print(f"🎯 Best validation accuracy: {trainer.best_val_acc:.2f}%")
-        print(f"📊 Final validation accuracy: {final_accuracy:.2f}%")
-        print(f"💾 Results saved to: {exp_dir}")
-        print(f"🤖 Final model saved to: {final_model_path}")
-        print(f"{'='*60}")
 
         return 0
 

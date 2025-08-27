@@ -138,10 +138,6 @@ def create_focal_loss(
                 alpha_weights.append(1.0)
 
         alpha = torch.FloatTensor(alpha_weights)
-        print(f"📊 Focal Loss alpha weights: {alpha.tolist()}")
-
-    if label_smoothing > 0.0:
-        print(f"🎯 Focal Loss with label smoothing: {label_smoothing}")
 
     return FocalLoss(
         alpha=alpha,

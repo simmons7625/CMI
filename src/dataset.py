@@ -35,9 +35,6 @@ class CMIDataset(Dataset):
         # Create chunks if chunking is enabled
         if self.use_chunking:
             self.chunks = self._create_chunks()
-            print(
-                f"📦 Created {len(self.chunks)} chunks from {len(sequences)} sequences (chunk_size={chunk_size})",
-            )
         else:
             # Calculate max_length for padding
             sequence_lengths = []
@@ -49,9 +46,6 @@ class CMIDataset(Dataset):
                 sequence_lengths.append(seq_len)
 
             self.max_length = max(sequence_lengths) if sequence_lengths else 100
-            print(
-                f"📏 Auto-calculated max_length: {self.max_length} (from {len(sequence_lengths)} sequences)",
-            )
 
     def __len__(self) -> int:
         return len(self.chunks) if self.use_chunking else len(self.sequences)
@@ -81,14 +75,22 @@ class CMIDataset(Dataset):
             # Create overlapping chunks
             seq_len = len(tof_data)
             if seq_len <= self.chunk_size:
-                # If sequence is shorter than chunk_size, use as single chunk
+                # If sequence is shorter than chunk_size, pad to chunk_size
+                pad_len = self.chunk_size - seq_len
+                
+                # Pad each modality with -1.0 (consistent with missing data convention)
+                tof_padded = np.vstack([tof_data, np.full((pad_len, tof_data.shape[1]), -1.0)])
+                acc_padded = np.vstack([acc_data, np.full((pad_len, acc_data.shape[1]), -1.0)])
+                rot_padded = np.vstack([rot_data, np.full((pad_len, rot_data.shape[1]), -1.0)])
+                thm_padded = np.vstack([thm_data, np.full((pad_len, thm_data.shape[1]), -1.0)])
+                
                 chunks.append(
                     {
                         "sequence_id": sequence_id,
-                        "tof": tof_data,
-                        "acc": acc_data,
-                        "rot": rot_data,
-                        "thm": thm_data,
+                        "tof": tof_padded,
+                        "acc": acc_padded,
+                        "rot": rot_padded,
+                        "thm": thm_padded,
                         "label": label,
                         "chunk_idx": 0,
                         "total_chunks": 1,
@@ -308,8 +310,7 @@ class SequenceProcessor:
                     },
                 )
 
-            except Exception as e:
-                print(f"Error processing sequence {seq_id[0]}: {e}")
+            except Exception:
                 # Fallback to original processing
                 seq_data = group.select(
                     self.acc_cols + self.rot_cols + self.thm_cols + self.tof_cols,
@@ -398,9 +399,6 @@ def stratified_split_equal_ratio(
         val_indices.extend(shuffled_indices[:n_val].tolist())
         train_indices.extend(shuffled_indices[n_val:].tolist())
 
-        print(
-            f"Label {label}: {n_train} train, {n_val} val ({n_val/(n_train+n_val)*100:.1f}% val)",
-        )
 
     # Create train and validation sequences
     train_sequences = [sequences[i] for i in train_indices]

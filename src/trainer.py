@@ -83,22 +83,14 @@ class CMITrainer:
                     reduction=loss_config.get("reduction", "mean"),
                     label_smoothing=label_smoothing,
                 ).to(self.device)
-                print(f"🎯 Using Focal Loss with gamma={loss_config.get('gamma', 2.0)}")
             else:
                 self.criterion = FocalLoss(
                     gamma=loss_config.get("gamma", 2.0),
                     reduction=loss_config.get("reduction", "mean"),
                     label_smoothing=label_smoothing,
                 ).to(self.device)
-                print(
-                    f"🎯 Using Focal Loss without class weighting (gamma={loss_config.get('gamma', 2.0)})",
-                )
         else:
             self.criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
-            print("📊 Using Cross Entropy Loss")
-
-        if label_smoothing > 0.0:
-            print(f"✨ Label smoothing enabled: {label_smoothing}")
 
         # Initialize optimizer and scheduler
         self.optimizer = optim.AdamW(
@@ -290,8 +282,6 @@ class CMITrainer:
         Returns:
             Dictionary with training history and final metrics
         """
-        print(f"Starting training for {num_epochs} epochs on {self.device}")
-        print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
 
         # Create save directory
         os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
@@ -319,14 +309,6 @@ class CMITrainer:
                 self.best_val_acc = val_acc
                 self.save_checkpoint(model_save_path, epoch, val_acc)
 
-            # Print epoch summary
-            print(f"Epoch {epoch+1}/{num_epochs}:")
-            print(f"  Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%")
-            print(f"  Val Loss: {val_loss:.4f}, Val Acc: {val_acc:.2f}%")
-            print(f"  Best Val Acc: {self.best_val_acc:.2f}%")
-            print("-" * 60)
-
-        print(f"Training completed! Best validation accuracy: {self.best_val_acc:.2f}%")
 
         return {
             "train_losses": self.train_losses,
@@ -372,8 +354,6 @@ class CMITrainer:
             checkpoint.update(additional_data)
 
         torch.save(checkpoint, path)
-        if self.training_config.get("verbose", True):
-            print(f"Checkpoint saved: {path} (Val Acc: {val_acc:.2f}%)")
 
     def load_checkpoint(self, path: str, load_optimizer: bool = True) -> dict:
         """Load model checkpoint.
@@ -397,7 +377,6 @@ class CMITrainer:
         self.best_val_acc = checkpoint.get("best_val_acc", 0.0)
         self.current_epoch = checkpoint.get("epoch", 0)
 
-        print(f"Checkpoint loaded: {path}")
         return checkpoint
 
     def count_parameters(self) -> dict[str, int]:
