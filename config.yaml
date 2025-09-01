@@ -13,7 +13,7 @@ data:
 model:
   num_classes: 18
   d_model: 128  # Feature dimension for each sensor branch
-  hidden_dim: 512  # Reduced feature dimension after feature selection (null defaults to d_model)
+  hidden_dim: 2048  # Reduced feature dimension after feature selection (null defaults to d_model)
   num_heads: 8
   num_layers: 3  # Number of transformer/GRU layers
   dropout: 0.2  # Dropout rate for transformer/GRU
@@ -22,11 +22,11 @@ model:
 
 # Training configuration
 training:
-  batch_size: 16
-  num_epochs: 30
+  batch_size: 32
+  num_epochs: 50
   learning_rate: 0.0001
   weight_decay: 0.001
-  random_seed: 42
+  random_seed: 2
   num_workers: 2
 
   # Gradient clipping to prevent exploding gradients
@@ -34,9 +34,9 @@ training:
 
   # Loss function configuration
   loss:
-    type: "focal_loss"  # "cross_entropy" or "focal_loss"
-    gamma: 1.0  # Focal loss gamma parameter (higher = more focus on hard examples)
-    reduction: "mean"  # "mean", "sum", or "none"
+    type: "cross_entropy"  # "cross_entropy" or "focal_loss"
+    gamma: null  # Focal loss gamma parameter (higher = more focus on hard examples)
+    reduction: null  # "mean", "sum", or "none"
     label_smoothing: 0.1  # Label smoothing factor (0.0 = no smoothing, 0.1 = 10% smoothing)
 
   # Scheduler configuration
@@ -46,11 +46,11 @@ training:
 
 # Data augmentation configuration
 augmentation:
-  enabled: true  # Enable/disable all augmentations
+  enabled: false  # Enable/disable all augmentations
   gaussian_noise:
-    enabled: true  # Enable Gaussian noise augmentation
-    sigma: 0.01    # Standard deviation for Gaussian noise (mu = source_value)
-    prob: 0.5      # Probability of applying noise to each modality
+    enabled: null  # Enable Gaussian noise augmentation
+    sigma: null    # Standard deviation for Gaussian noise (mu = source_value)
+    prob: null      # Probability of applying noise to each modality
 
 # Output configuration
 output:

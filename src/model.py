@@ -160,6 +160,8 @@ class TOFBranch(nn.Module):
         self.values_per_sensor = values_per_sensor
         self.d_model = d_model
 
+        # Note: Cross-sensor correlation removed since each branch handles single sensor
+
         # EfficientNetB0 stem
         self.stem = nn.Conv2d(1, 32, 3, stride=2, padding=1, bias=False)
         self.bn_stem = nn.BatchNorm2d(32)
@@ -324,41 +326,92 @@ class TOFBranch(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
+    def _apply_cross_sensor_correlation(self, tof_data):
+        """Apply cross-sensor correlation based on physical sensor layout."""
+        # TOF sensor layout (based on sensor.png):
+        # Sensor layout: TOF1 (center), TOF2 (top), TOF3 (right), TOF4 (bottom), TOF5 (left)
+        # Adjacency relationships for noise filtering and feature enhancement
+
+        enhanced_data = tof_data.clone()
+
+        # Define sensor neighbors based on physical layout
+        sensor_neighbors = {
+            0: [1, 2, 3, 4],  # TOF1 (center) - neighbors with all others
+            1: [0, 2, 4],  # TOF2 (top) - neighbors with center, right, left
+            2: [0, 1, 3],  # TOF3 (right) - neighbors with center, top, bottom
+            3: [0, 2, 4],  # TOF4 (bottom) - neighbors with center, right, left
+            4: [0, 1, 3],  # TOF5 (left) - neighbors with center, top, bottom
+        }
+
+        # For each sensor, enhance its readings using neighbor information
+        for sensor_idx in range(5):
+            sensor_start = sensor_idx * 64
+            sensor_end = (sensor_idx + 1) * 64
+            sensor_data = tof_data[:, :, sensor_start:sensor_end]
+
+            # Get neighbor sensors' data
+            neighbor_data_list = []
+            for neighbor_idx in sensor_neighbors[sensor_idx]:
+                neighbor_start = neighbor_idx * 64
+                neighbor_end = (neighbor_idx + 1) * 64
+                neighbor_data_list.append(tof_data[:, :, neighbor_start:neighbor_end])
+
+            if neighbor_data_list:
+                # Apply cross-sensor correlation using pair-wise weights:
+                # Get weights for this sensor from all its neighbors
+                weighted_contribution = torch.zeros_like(sensor_data)
+                for neighbor_idx in sensor_neighbors[sensor_idx]:
+                    weight = torch.sigmoid(
+                        self.correlation_weights[sensor_idx, neighbor_idx],
+                    )
+                    neighbor_start = neighbor_idx * 64
+                    neighbor_end = (neighbor_idx + 1) * 64
+                    neighbor_data = tof_data[:, :, neighbor_start:neighbor_end]
+                    weighted_contribution += weight * neighbor_data
+
+                # Combine original sensor with weighted neighbor contributions
+                enhanced_sensor_data = sensor_data + weighted_contribution
+
+                enhanced_data[:, :, sensor_start:sensor_end] = enhanced_sensor_data
+
+        return enhanced_data
+
     def forward(self, x):
-        # x shape: (batch_size, seq_len, 320) # 5 sensors * 64 values
+        # x shape: (batch_size, seq_len, 64) # Single sensor * 64 values
         batch_size, seq_len, _ = x.size()
 
-        # Reshape to process all sensors and timesteps
+        # Skip cross-sensor correlation for single sensor branches
+        # Each branch now handles only one sensor
+
+        # Reshape for processing (single sensor)
         x = x.view(batch_size, seq_len, self.num_sensors, self.values_per_sensor)
 
-        # Process each sensor-timestep combination
+        # Process each timestep for the single sensor
         outputs = []
         for t in range(seq_len):
-            timestep_features = []
+            # Extract sensor data for this timestep and reshape to 8x8 grid
+            sensor_data = x[:, t, 0, :].view(
+                batch_size,
+                1,
+                8,
+                8,
+            )  # Only process first (and only) sensor
 
-            for sensor in range(self.num_sensors):
-                # Extract sensor data and reshape to 8x8 grid
-                sensor_data = x[:, t, sensor, :].view(batch_size, 1, 8, 8)
+            # Apply EfficientNet backbone
+            out = F.silu(self.bn_stem(self.stem(sensor_data)))
 
-                # Apply EfficientNetB0 backbone
-                out = F.silu(self.bn_stem(self.stem(sensor_data)))
+            # Apply MBConv blocks
+            for mb_block in self.mb_blocks:
+                out = mb_block(out)
 
-                # Apply MBConv blocks
-                for mb_block in self.mb_blocks:
-                    out = mb_block(out)
+            # Apply head convolution
+            out = F.silu(self.bn_head(self.conv_head(out)))
 
-                # Apply head convolution
-                out = F.silu(self.bn_head(self.conv_head(out)))
-
-                # Global pooling and projection
-                out = self.global_pool(out)  # (batch_size, 1280, 1, 1)
-                out = out.view(batch_size, -1)  # (batch_size, 1280)
-                sensor_feat = self.feature_proj(out)  # (batch_size, d_model)
-                timestep_features.append(sensor_feat)
-
-            # Average sensor features for this timestep
-            timestep_feat = torch.stack(timestep_features, dim=1).mean(dim=1)
-            outputs.append(timestep_feat)
+            # Global pooling and projection
+            out = self.global_pool(out)  # (batch_size, 1280, 1, 1)
+            out = out.view(batch_size, -1)  # (batch_size, 1280)
+            sensor_feat = self.feature_proj(out)  # (batch_size, d_model)
+            outputs.append(sensor_feat)
 
         # Stack to get (batch_size, seq_len, d_model), then transpose for 2D attention
         x = torch.stack(outputs, dim=1)  # (batch_size, seq_len, d_model)
@@ -371,6 +424,8 @@ class TOFBranchB3(nn.Module):
         self.num_sensors = num_sensors
         self.values_per_sensor = values_per_sensor
         self.d_model = d_model
+
+        # Note: Cross-sensor correlation removed since each branch handles single sensor
 
         # EfficientNetB3 stem - deeper stem
         self.stem = nn.Conv2d(1, 40, 3, stride=2, padding=1, bias=False)
@@ -616,41 +671,92 @@ class TOFBranchB3(nn.Module):
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
 
+    def _apply_cross_sensor_correlation(self, tof_data):
+        """Apply cross-sensor correlation based on physical sensor layout."""
+        # TOF sensor layout (based on sensor.png):
+        # Sensor layout: TOF1 (center), TOF2 (top), TOF3 (right), TOF4 (bottom), TOF5 (left)
+        # Adjacency relationships for noise filtering and feature enhancement
+
+        enhanced_data = tof_data.clone()
+
+        # Define sensor neighbors based on physical layout
+        sensor_neighbors = {
+            0: [1, 2, 3, 4],  # TOF1 (center) - neighbors with all others
+            1: [0, 2, 4],  # TOF2 (top) - neighbors with center, right, left
+            2: [0, 1, 3],  # TOF3 (right) - neighbors with center, top, bottom
+            3: [0, 2, 4],  # TOF4 (bottom) - neighbors with center, right, left
+            4: [0, 1, 3],  # TOF5 (left) - neighbors with center, top, bottom
+        }
+
+        # For each sensor, enhance its readings using neighbor information
+        for sensor_idx in range(5):
+            sensor_start = sensor_idx * 64
+            sensor_end = (sensor_idx + 1) * 64
+            sensor_data = tof_data[:, :, sensor_start:sensor_end]
+
+            # Get neighbor sensors' data
+            neighbor_data_list = []
+            for neighbor_idx in sensor_neighbors[sensor_idx]:
+                neighbor_start = neighbor_idx * 64
+                neighbor_end = (neighbor_idx + 1) * 64
+                neighbor_data_list.append(tof_data[:, :, neighbor_start:neighbor_end])
+
+            if neighbor_data_list:
+                # Apply cross-sensor correlation using pair-wise weights:
+                # Get weights for this sensor from all its neighbors
+                weighted_contribution = torch.zeros_like(sensor_data)
+                for neighbor_idx in sensor_neighbors[sensor_idx]:
+                    weight = torch.sigmoid(
+                        self.correlation_weights[sensor_idx, neighbor_idx],
+                    )
+                    neighbor_start = neighbor_idx * 64
+                    neighbor_end = (neighbor_idx + 1) * 64
+                    neighbor_data = tof_data[:, :, neighbor_start:neighbor_end]
+                    weighted_contribution += weight * neighbor_data
+
+                # Combine original sensor with weighted neighbor contributions
+                enhanced_sensor_data = sensor_data + weighted_contribution
+
+                enhanced_data[:, :, sensor_start:sensor_end] = enhanced_sensor_data
+
+        return enhanced_data
+
     def forward(self, x):
-        # x shape: (batch_size, seq_len, 320) # 5 sensors * 64 values
+        # x shape: (batch_size, seq_len, 64) # Single sensor * 64 values
         batch_size, seq_len, _ = x.size()
 
-        # Reshape to process all sensors and timesteps
+        # Skip cross-sensor correlation for single sensor branches
+        # Each branch now handles only one sensor
+
+        # Reshape for processing (single sensor)
         x = x.view(batch_size, seq_len, self.num_sensors, self.values_per_sensor)
 
-        # Process each sensor-timestep combination
+        # Process each timestep for the single sensor
         outputs = []
         for t in range(seq_len):
-            timestep_features = []
+            # Extract sensor data for this timestep and reshape to 8x8 grid
+            sensor_data = x[:, t, 0, :].view(
+                batch_size,
+                1,
+                8,
+                8,
+            )  # Only process first (and only) sensor
 
-            for sensor in range(self.num_sensors):
-                # Extract sensor data and reshape to 8x8 grid
-                sensor_data = x[:, t, sensor, :].view(batch_size, 1, 8, 8)
+            # Apply EfficientNetB3 backbone
+            out = F.silu(self.bn_stem(self.stem(sensor_data)))
 
-                # Apply EfficientNetB3 backbone
-                out = F.silu(self.bn_stem(self.stem(sensor_data)))
+            # Apply MBConv blocks
+            for mb_block in self.mb_blocks:
+                out = mb_block(out)
 
-                # Apply MBConv blocks
-                for mb_block in self.mb_blocks:
-                    out = mb_block(out)
+            # Apply head convolution
+            out = F.silu(self.bn_head(self.conv_head(out)))
 
-                # Apply head convolution
-                out = F.silu(self.bn_head(self.conv_head(out)))
-
-                # Global pooling and projection
-                out = self.global_pool(out)  # (batch_size, 1536, 1, 1)
-                out = out.view(batch_size, -1)  # (batch_size, 1536)
-                sensor_feat = self.feature_proj(out)  # (batch_size, d_model)
-                timestep_features.append(sensor_feat)
-
-            # Average sensor features for this timestep
-            timestep_feat = torch.stack(timestep_features, dim=1).mean(dim=1)
-            outputs.append(timestep_feat)
+            # Global pooling and projection
+            out = self.global_pool(out)  # (batch_size, 1536, 1, 1)
+            out = out.view(batch_size, -1)  # (batch_size, 1536)
+            sensor_feat = self.feature_proj(out)  # (batch_size, d_model)
+            outputs.append(sensor_feat)
 
         # Stack to get (batch_size, seq_len, d_model), then transpose for 2D attention
         x = torch.stack(outputs, dim=1)  # (batch_size, seq_len, d_model)
@@ -958,13 +1064,28 @@ class GestureBranchedModel(nn.Module):
         self.d_model = d_model
         self.hidden_dim = hidden_dim if hidden_dim is not None else d_model
         # Feature branches with configurable feature dimensions
-        if tof_backbone.lower() == "b3":
-            self.tof_branch = TOFBranchB3(d_model=d_model)
-        elif tof_backbone.lower() == "b0":
-            self.tof_branch = TOFBranch(d_model=d_model)
-        else:
-            msg = f"Unknown tof_backbone: {tof_backbone}. Choose 'b0' or 'b3'."
-            raise ValueError(msg)
+        # Create separate TOF branch instances for each sensor
+        self.num_sensors = 5  # TOF sensors
+        self.tof_branches = nn.ModuleList()
+        for _i in range(self.num_sensors):
+            if tof_backbone.lower() == "b3":
+                # Create TOF branch for single sensor (1 sensor, 64 values)
+                tof_branch = TOFBranchB3(
+                    num_sensors=1,
+                    values_per_sensor=64,
+                    d_model=d_model,
+                )
+            elif tof_backbone.lower() == "b0":
+                # Create TOF branch for single sensor (1 sensor, 64 values)
+                tof_branch = TOFBranch(
+                    num_sensors=1,
+                    values_per_sensor=64,
+                    d_model=d_model,
+                )
+            else:
+                msg = f"Unknown tof_backbone: {tof_backbone}. Choose 'b0' or 'b3'."
+                raise ValueError(msg)
+            self.tof_branches.append(tof_branch)
         self.acc_branch = OtherSensorsBranch(
             input_dim=acc_dim,
             d_model=d_model,
@@ -981,13 +1102,16 @@ class GestureBranchedModel(nn.Module):
             dropout=dropout,
         )
 
-        # Feature fusion by concatenation (4 branches)
-        self.fusion_norm = nn.BatchNorm1d(d_model * 4)
+        # Feature fusion by concatenation (5 TOF branches + 3 other sensor branches = 8 branches)
+        self.fusion_norm = nn.BatchNorm1d(d_model * (self.num_sensors + 3))
 
-        # Feature Selection Processor: d_model*4 -> hidden_dim -> transformer/gru
+        # Feature Selection Processor: d_model*(5+3) -> hidden_dim -> transformer/gru
+        total_feature_dim = d_model * (
+            self.num_sensors + 3
+        )  # 5 TOF branches + 3 other sensor branches
         if sequence_processor.lower() == "gru":
             self.feature_processor = FeatureSelectionGRU(
-                d_model * 4,  # Input: concatenated features from all 4 branches
+                total_feature_dim,  # Input: concatenated features from all branches
                 self.hidden_dim,  # Output: reduced to hidden_dim dimension
                 num_layers=num_layers,
                 dropout=dropout,
@@ -995,7 +1119,7 @@ class GestureBranchedModel(nn.Module):
             )
         elif sequence_processor.lower() == "transformer":
             self.feature_processor = FeatureSelectionTransformer(
-                d_model * 4,  # Input: concatenated features from all 4 branches
+                total_feature_dim,  # Input: concatenated features from all branches
                 self.hidden_dim,  # Output: reduced to hidden_dim dimension
                 num_heads,
                 num_layers,
@@ -1040,17 +1164,35 @@ class GestureBranchedModel(nn.Module):
         rot_features,
         thm_features,
     ):
-        # Process sensor branches
-        tof_out = self.tof_branch(tof_features)  # (batch_size, d_model, seq_len)
+        # Process each TOF sensor separately
+        # tof_features shape: (batch_size, seq_len, 320) # 5 sensors * 64 values
+        tof_outputs = []
+        for sensor_idx in range(self.num_sensors):
+            # Extract features for this sensor (64 values per sensor)
+            start_idx = sensor_idx * 64
+            end_idx = (sensor_idx + 1) * 64
+            sensor_tof_data = tof_features[
+                :,
+                :,
+                start_idx:end_idx,
+            ]  # (batch_size, seq_len, 64)
+
+            # Process through corresponding TOF branch
+            sensor_tof_out = self.tof_branches[sensor_idx](
+                sensor_tof_data,
+            )  # (batch_size, d_model, seq_len)
+            tof_outputs.append(sensor_tof_out)
+
+        # Process other sensor branches
         acc_out = self.acc_branch(acc_features)  # (batch_size, d_model, seq_len)
         rot_out = self.rot_branch(rot_features)  # (batch_size, d_model, seq_len)
         thm_out = self.thm_branch(thm_features)  # (batch_size, d_model, seq_len)
 
-        # Concatenate features
+        # Concatenate all features (5 TOF branches + 3 other sensor branches)
         fused = torch.cat(
-            (tof_out, acc_out, rot_out, thm_out),
+            [*tof_outputs, acc_out, rot_out, thm_out],
             dim=1,
-        )  # (batch_size, 4*d_model, seq_len)
+        )  # (batch_size, (5+3)*d_model, seq_len)
 
         # Apply normalization
         fused = self.fusion_norm(fused)
@@ -1082,8 +1224,8 @@ def create_model(
     hidden_dim=128,
     num_heads=8,
     num_layers=1,
-    acc_dim=4,
-    rot_dim=8,
+    acc_dim=3,
+    rot_dim=4,
     thm_dim=5,
     dropout=0.1,
     max_seq_length=5000,

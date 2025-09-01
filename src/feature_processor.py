@@ -126,18 +126,6 @@ class FeatureProcessor:
         return angular_dist
 
     @staticmethod
-    def process_tof_features(tof_data):
-        """Process ToF sensor data - simple cleaning only."""
-        if isinstance(tof_data, pl.DataFrame):
-            tof_cols = [col for col in tof_data.columns if col.startswith("tof_")]
-            tof_values = tof_data.select(tof_cols).to_numpy()
-        else:
-            tof_values = tof_data
-
-        # Replace missing values (-1.0) with 0
-        return np.where(tof_values == -1.0, 0.0, tof_values)
-
-    @staticmethod
     def process_thermal_features(thm_data):
         """Process thermal sensor data - simple cleaning only."""
         if isinstance(thm_data, pl.DataFrame):
@@ -206,8 +194,8 @@ class FeatureProcessor:
         # Raw thermal features
         enhanced_thm = np.where(thm_data == -1.0, 0.0, thm_data)  # 5 features
 
-        # ToF features (now just cleaning)
-        enhanced_tof = processor.process_tof_features(tof_data)  # 320 features
+        # ToF features with simple cleaning (cross-sensor correlation now handled in model)
+        enhanced_tof = np.where(tof_data == -1.0, 0.0, tof_data)  # 320 features
 
         return {
             "tof": enhanced_tof,

@@ -51,7 +51,7 @@ def load_and_process_data(config: dict):
     """Load and process training data."""
     # Load data
     train_df = pl.read_csv(config["data"]["train_path"])
-    train_df = train_df.fill_null(-1.0).fill_nan(-1.0)
+    train_df = train_df.fill_null(0.0).fill_nan(0.0)
 
     # Prepare labels
     train_df, label_encoder, target_gestures, non_target_gestures = (
